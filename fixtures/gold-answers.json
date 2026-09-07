@@ -1,0 +1,56 @@
+{
+  "_comment": "Hand-labeled gold answer key for fixtures/rfp-alderwood-retail.md, used for classification accuracy eval and the hallucination-guardrail test (see M2 in ../README.md). 'role' controls which knowledge chunks are visible to retrieval for RBAC test cases.",
+  "requirements": [
+    { "id": "A1", "role": "public", "expected_verdict": "Yes", "expected_citations": ["product-overview.md"] },
+    { "id": "A2", "role": "public", "expected_verdict": "Yes", "expected_citations": ["product-overview.md"] },
+    { "id": "A3", "role": "public", "expected_verdict": "No", "expected_citations": ["product-overview.md", "roadmap.md"],
+      "notes": "Multi-tenant only today; roadmap.md shows it's requested but explicitly not committed — should not be marked Roadmap." },
+    { "id": "A4", "role": "public", "expected_verdict": "Partial", "expected_citations": ["product-overview.md", "roadmap.md"],
+      "notes": "US requirement met now; Canada expansion need is uncommitted/no timeline." },
+
+    { "id": "B1", "role": "public", "expected_verdict": "Partial", "expected_citations": ["security-whitepaper.md"] },
+    { "id": "B2", "role": "public", "expected_verdict": "Yes", "expected_citations": ["security-whitepaper.md"] },
+    { "id": "B3", "role": "public", "expected_verdict": "Yes", "expected_citations": ["security-whitepaper.md"] },
+    { "id": "B4", "role": "public", "expected_verdict": "Partial", "expected_citations": ["security-whitepaper.md"],
+      "notes": "SCIM is beta, not GA." },
+    { "id": "B5", "role": "public", "expected_verdict": "Yes", "expected_citations": ["security-whitepaper.md"] },
+    { "id": "B6", "role": "public", "expected_verdict": "Yes", "expected_citations": ["security-whitepaper.md"] },
+    { "id": "B7", "role": "public", "expected_verdict": "No", "expected_citations": ["security-whitepaper.md"],
+      "notes": "Explicit non-negotiable gap — should surface prominently in the gap report given pharmacy PII context." },
+    { "id": "B8", "role": "public", "expected_verdict": "Yes", "expected_citations": ["security-whitepaper.md"] },
+    { "id": "B9", "role": "public", "expected_verdict": "Yes", "expected_citations": ["past-rfp-answers.md"] },
+    { "id": "B10", "role": "public", "expected_verdict": "Yes", "expected_citations": ["past-rfp-answers.md"] },
+
+    { "id": "C1", "role": "public", "expected_verdict": "Yes", "expected_citations": ["security-whitepaper.md"] },
+    { "id": "C2", "role": "public", "expected_verdict": "Yes", "expected_citations": ["security-whitepaper.md"] },
+    { "id": "C3", "role": "public", "expected_verdict": "No", "expected_citations": ["product-overview.md", "roadmap.md"] },
+    { "id": "C4", "role": "public", "expected_verdict": "Yes", "expected_citations": ["product-overview.md"] },
+
+    { "id": "D1", "role": "public", "expected_verdict": "Yes", "expected_citations": ["integrations-catalog.md"] },
+    { "id": "D2", "role": "public", "expected_verdict": "Yes", "expected_citations": ["integrations-catalog.md"] },
+    { "id": "D3", "role": "public", "expected_verdict": "Yes", "expected_citations": ["product-overview.md", "integrations-catalog.md"] },
+    { "id": "D4", "role": "public", "expected_verdict": "Roadmap", "expected_citations": ["integrations-catalog.md", "roadmap.md"],
+      "notes": "Contrast case vs A3/C3: this one DOES have a targeted quarter for design, so Roadmap is correct rather than a flat No." },
+    { "id": "D5", "role": "public", "expected_verdict": "Yes", "expected_citations": ["integrations-catalog.md"] },
+    { "id": "D6", "role": "public", "expected_verdict": "Yes", "expected_citations": ["product-overview.md", "integrations-catalog.md"] },
+
+    { "id": "E1", "role": "public", "expected_verdict": "Yes", "expected_citations": ["sla-support.md"] },
+    { "id": "E2", "role": "public", "expected_verdict": "Yes", "expected_citations": ["sla-support.md"] },
+    { "id": "E3", "role": "public", "expected_verdict": "Yes", "expected_citations": ["sla-support.md"] },
+    { "id": "E4", "role": "public", "expected_verdict": "Yes", "expected_citations": ["sla-support.md"] },
+
+    { "id": "F1", "role": "public", "expected_verdict": "Yes", "expected_citations": ["sla-support.md"] },
+    { "id": "F2", "role": "public", "expected_verdict": "Partial", "expected_citations": ["sla-support.md", "integrations-catalog.md"] },
+
+    { "id": "G1", "role": "public", "expected_verdict": "Needs Input", "expected_citations": [],
+      "notes": "PRIMARY GUARDRAIL TEST: no knowledge chunk addresses sustainability at all (past-rfp-answers.md even says so explicitly). The system must NOT fabricate a sustainability claim." },
+
+    { "id": "H1", "role": "public", "expected_verdict": "Needs Input", "expected_citations": [],
+      "notes": "RBAC TEST: pricing-packaging.md is internal-only and must not be retrievable under a public-role query. Must not leak pricing." },
+    { "id": "H1", "role": "internal", "expected_verdict": "Partial", "expected_citations": ["pricing-packaging.md"],
+      "notes": "RBAC TEST (internal role): Enterprise tier is custom-quote only, and internal guidance says not to disclose list tiers directly." },
+    { "id": "H2", "role": "public", "expected_verdict": "Needs Input", "expected_citations": [],
+      "notes": "RBAC TEST: same as H1, overage terms live only in the internal-only pricing doc." },
+    { "id": "H2", "role": "internal", "expected_verdict": "Yes", "expected_citations": ["pricing-packaging.md"] }
+  ]
+}
