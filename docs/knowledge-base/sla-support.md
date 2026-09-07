@@ -2,32 +2,57 @@
 
 *Doc type: public | Last updated: 2026-03-01*
 
-## Uptime SLA
+## Uptime commitment
 
-| Tier       | Uptime SLA | Credit for breach              |
-|------------|-----------|----------------------------------|
-| Standard   | 99.5%     | Not offered                      |
-| Growth     | 99.5%     | Service credit per breach tier   |
-| Enterprise | 99.9%     | Service credit per breach tier   |
+| Tier | Uptime SLA | Contractual | Service credit |
+|---|---|---|---|
+| Standard | 99.5% | No — target only | None |
+| Growth | 99.5% | Yes | 5% of monthly fee per 0.5% below target |
+| Enterprise | 99.9% | Yes | 10% of monthly fee per 0.1% below target, capped at 30% |
 
-## Support response times (by severity)
+- Uptime is measured as successful responses to the platform health endpoint,
+  sampled at one-minute intervals from three external locations, aggregated
+  monthly.
+- Measurement is published on the public status page and is independently
+  verifiable against it.
+- **Excluded from the calculation**: announced planned maintenance, customer-caused
+  incidents, force majeure, and degradation attributable to a third-party
+  destination system.
+- **Data freshness SLA**: Enterprise customers may contract a 95th-percentile
+  ingestion-to-availability latency of 5 minutes. This is offered in addition
+  to the uptime SLA and carries its own credit schedule.
 
-| Tier       | Critical (P1) | High (P2) | Normal (P3)        |
-|------------|---------------|-----------|---------------------|
-| Standard   | Next business day | 2 business days | 5 business days |
-| Growth     | 4 hours       | 1 business day | 3 business days |
-| Enterprise | 1 hour (24/7) | 4 hours   | 1 business day     |
+## Support response targets
 
-## Support channels
+| Tier | P1 Critical | P2 High | P3 Normal |
+|---|---|---|---|
+| Standard | Next business day | 2 business days | 5 business days |
+| Growth | 4 hours | 1 business day | 3 business days |
+| Enterprise | 1 hour, 24/7/365 | 4 hours | 1 business day |
 
-- Standard/Growth: email and in-app chat, business hours (Mon–Fri, 8am–6pm ET).
-- Enterprise: 24/7 phone, email, and chat support, plus a named Technical
-  Account Manager (TAM).
+## Support model
 
-## Onboarding & implementation
+- **Standard / Growth**: email and in-app chat, Mon–Fri 08:00–18:00 US
+  Eastern.
+- **Enterprise**: 24/7/365 phone, email, and chat.
+- Support is delivered from Seattle (US) and Dublin (Ireland). Follow-the-sun
+  coverage is provided by these two locations only.
+- **Named Technical Account Manager** included on Enterprise tier. A Customer
+  Success Manager is assigned on Growth and Enterprise. Standard tier has no
+  named contact.
+- **Escalation**: a P1 not progressing within 2 hours escalates to the
+  Support Director, and at 4 hours to the VP of Engineering. Enterprise
+  customers may invoke escalation directly through their TAM.
+- Ticketing is through the Meridian support portal. A bidirectional
+  ServiceNow and Jira Service Management integration is available for
+  Enterprise customers.
+- Peak retail trading periods are covered by standard 24/7 Enterprise
+  support; Meridian additionally operates a change freeze from 15 November to
+  2 January.
 
-- Standard/Growth: self-serve onboarding with guided documentation and
-  onboarding webinars.
-- Enterprise: dedicated Customer Success Manager (CSM) and an implementation
-  specialist for the first 90 days post-signature. Typical time-to-first-value
-  is 4–8 weeks depending on data source complexity.
+## Onboarding
+
+- Standard/Growth: self-serve onboarding, guided documentation, onboarding
+  webinars.
+- Enterprise: dedicated CSM plus an implementation specialist for the first
+  90 days. See `implementation-services.md`.

@@ -1,27 +1,32 @@
 """Generate the PDF form of the Alderwood RFP fixture.
 
-This is the hard parsing case on purpose. Requirements are embedded in flowing
-numbered prose rather than table rows, so a structural parser cannot recover
-them and the LLM fallback path has to. It also carries the hazards real RFP
-PDFs carry:
+This is the hard parsing case. Requirements are embedded in flowing numbered
+prose rather than table rows, so a structural parser cannot recover them and
+the LLM fallback path has to. It carries the hazards real RFP PDFs carry:
 
-  - a cover page whose metadata is not a requirement
-  - background prose containing "must"/"shall" sentences that are NOT
-    requirements (a keyword-matching parser will over-extract these)
-  - repeating page headers/footers that interleave into extracted text
-  - an appendix of submission instructions, also full of "must" distractors
+  - a cover page and a table of contents whose entries look like requirements
+  - front matter (timeline, submission instructions, evaluation criteria,
+    glossary) written in dense "must"/"shall" language while containing NO
+    requirements at all - the single largest source of false positives
+  - a terms and conditions appendix, likewise all obligation language
+  - repeating page headers and footers that interleave into extracted text
+  - a signature and attestation page
+
+Correct extraction yields exactly the requirements in requirements_data, and
+nothing from the front matter or appendices.
 
 Not exercised here: a requirement whose text breaks across a page boundary.
 ReportLab reflows a paragraph onto the next page rather than splitting it, and
 forcing a split needs a requirement longer than a full page, which no real RFP
 contains. If that case matters later, hand-author a PDF for it rather than
 distorting this one.
-
-Requirement IDs match the .md and .xlsx fixtures, so fixtures/gold-answers.json
-applies unchanged to all three formats.
 """
 
-from reportlab.lib.enums import TA_JUSTIFY
+import sys
+from pathlib import Path
+
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
@@ -30,181 +35,322 @@ from reportlab.platypus import (
     Paragraph,
     SimpleDocTemplate,
     Spacer,
+    Table,
+    TableStyle,
 )
 
-OUT = "/Users/Connor/rfp-assistant/fixtures/rfp-alderwood-retail.pdf"
+sys.path.insert(0, str(Path(__file__).parent))
+from requirements_data import (  # noqa: E402
+    COMPLIANCE_DEFINITIONS,
+    RFP_META,
+    SECTIONS,
+)
 
-SECTIONS = [
-    ("Section A - Company and Product Overview", [
-        ("A1", "Describe your platform's core identity resolution capability across web, mobile, and offline (in-store point-of-sale) data sources. Vendors should explain whether matching is deterministic, probabilistic, or both."),
-        ("A2", "Describe your data model and any limits on custom customer attributes."),
-        ("A3", "Confirm whether your platform is offered as single-tenant or dedicated infrastructure, or as multi-tenant SaaS only. Alderwood's security team has a stated preference for single-tenant deployments for PII-heavy workloads."),
-        ("A4", "What regions can customer data be hosted in? Alderwood requires U.S. data residency at minimum and may expand into Canada within 18 months."),
-    ]),
-    ("Section B - Security and Compliance", [
-        ("B1", "List all current security certifications, including SOC 2, ISO 27001, and PCI DSS where applicable, and state the availability of the corresponding certificate or audit report."),
-        ("B2", "Describe encryption of data at rest and in transit, including key management practices."),
-        ("B3", "Describe supported single sign-on protocols for administrative console access."),
-        ("B4", "Do you support SCIM-based automated user provisioning and deprovisioning?"),
-        ("B5", "Describe role-based access control capabilities, including whether custom roles are supported. Alderwood expects to provision approximately 240 named users across its marketing, analytics, store operations, and loyalty teams, and requires that access to personally identifiable loyalty data be restricted to a named subset of those users. Your response should state which roles are available out of the box, whether custom roles may be defined by an administrator without vendor involvement, and whether role assignment can be delegated to a departmental administrator rather than a global administrator."),
-        ("B6", "Describe your penetration testing program and its cadence, and state whether results are shareable."),
-        ("B7", "Alderwood's loyalty program captures purchase data originating from 22 in-store pharmacy counters. Is your platform HIPAA compliant, and will you execute a Business Associate Agreement?"),
-        ("B8", "Describe your disaster recovery capabilities, including stated Recovery Point Objective and Recovery Time Objective."),
-        ("B9", "Do you support multi-factor authentication for platform administrator accounts?"),
-        ("B10", "Describe your approach to sub-processors and to disclosure of third-party data sharing."),
-    ]),
-    ("Section C - Data Privacy and Residency", [
-        ("C1", "Confirm GDPR compliance and the availability of a Data Processing Agreement, in the event Alderwood expands into EU markets."),
-        ("C2", "Confirm CCPA compliance, including support for consumer data deletion and access requests."),
-        ("C3", "If Alderwood expands operations into Canada within the next 18 months, can customer data be hosted so as to meet Canadian data residency expectations?"),
-        ("C4", "What is your default data retention period, and what is the maximum configurable retention period?"),
-    ]),
-    ("Section D - Integrations and Technical Architecture", [
-        ("D1", "Confirm native integration support for Salesforce Marketing Cloud, which Alderwood uses for email and SMS campaign execution."),
-        ("D2", "Confirm native integration support for Shopify Plus."),
-        ("D3", "Describe support for real-time audience segmentation and activation at sub-minute latency."),
-        ("D4", "Do you offer a managed connector for streaming raw event data into a Kafka topic for downstream consumption by Alderwood's data engineering team?"),
-        ("D5", "Describe the REST APIs and client SDKs available for custom event ingestion."),
-        ("D6", "Describe reverse ETL capabilities for syncing computed segments into a data warehouse. Alderwood uses Snowflake."),
-    ]),
-    ("Section E - Reliability, Service Levels, and Support", [
-        ("E1", "What uptime service level agreement do you offer, and what remedy is provided in the event of a breach?"),
-        ("E2", "Describe support response time commitments by severity level for your highest support tier."),
-        ("E3", "Is 24/7 support available, and through which channels?"),
-        ("E4", "Will Alderwood be assigned a dedicated Customer Success Manager or Technical Account Manager?"),
-    ]),
-    ("Section F - Implementation and Change Management", [
-        ("F1", "Describe your typical implementation timeline for a customer of Alderwood's size and data source complexity."),
-        ("F2", "What professional services or implementation support is included in the subscription versus billed separately?"),
-    ]),
-    ("Section G - Corporate Responsibility", [
-        ("G1", "Describe your company's environmental sustainability program, including any data center carbon footprint commitments or offset purchases."),
-    ]),
-    ("Section H - Commercial Terms", [
-        ("H1", "Provide pricing for a deployment covering approximately 2.1 million tracked customer profiles, including any volume discount structure."),
-        ("H2", "Describe your overage billing policy in the event tracked profile volume exceeds the contracted tier mid-term."),
-    ]),
-]
+OUT = Path(__file__).parent / "rfp-alderwood-retail.pdf"
 
 BACKGROUND = [
-    "Alderwood Retail Group operates 118 grocery and general-merchandise stores across "
+    f"{RFP_META['buyer']} operates 118 grocery and general-merchandise stores across "
     "the Pacific Northwest and Mountain West, together with an e-commerce storefront "
-    "hosted on Shopify Plus. Its loyalty program has 2.1 million enrolled members, and "
+    "hosted on Shopify Plus. Its loyalty programme has 2.1 million enrolled members and "
     "captures transaction data from all store formats, including 22 in-store pharmacy "
     "counters.",
 
-    "Alderwood is evaluating customer data platform vendors in order to unify online, "
-    "in-store, and loyalty data into a single customer profile, and to drive marketing "
-    "personalization from that profile. Campaign execution today runs through Salesforce "
-    "Marketing Cloud, and the analytics team operates a Snowflake warehouse.",
+    "Alderwood is seeking a customer data platform to unify online, in-store, and "
+    "loyalty data into a single customer profile, and to drive marketing "
+    "personalisation from that profile. Campaign execution today runs through "
+    "Salesforce Marketing Cloud, and the analytics team operates a Snowflake "
+    "warehouse. Alderwood anticipates expanding operations into Canada within 18 "
+    "months of contract signature.",
 
-    # Deliberate distractors: obligation language in non-requirement prose.
-    "All vendors must be incorporated within the United States or Canada and must have "
-    "been operating continuously for no fewer than three years as of the response "
-    "deadline. Proposals shall be submitted in electronic form only. Alderwood shall "
-    "not be liable for any costs incurred by a vendor in preparing its response, and "
-    "reserves the right to reject any or all proposals without stated cause.",
-
-    "Vendors should respond to each numbered requirement below with one of the following "
-    "dispositions: Yes, Partial, No, or Planned/Roadmap, followed by a brief supporting "
-    "explanation. A disposition given without explanation may be scored as non-responsive.",
+    "This solicitation covers the licence, implementation, and ongoing support of that "
+    "platform for an initial term of three years. Alderwood intends to award to a "
+    "single vendor. Alderwood is not obliged to award at all, and reserves the right "
+    "to cancel this solicitation at any point prior to execution of a definitive "
+    "agreement.",
 ]
 
-APPENDIX = [
-    "Appendix A - Submission Instructions",
-
-    "Responses must be submitted as a single PDF document to procurement@alderwoodretail.example "
-    "no later than 5:00 p.m. Pacific Time on 15 August 2026. Late submissions shall not be "
-    "considered. Each response must include the RFP reference number ARG-CDP-2026-014 in the "
+# Front matter. Dense obligation language, zero requirements. Every "must" and
+# "shall" below is a false positive waiting to happen.
+SUBMISSION = [
+    "Responses must be submitted as a single PDF document together with the completed "
+    f"response workbook to {RFP_META['contact']} no later than "
+    f"{RFP_META['due']} at {RFP_META['due_time']}. Late submissions shall not be "
+    f"considered. Each submission must cite reference {RFP_META['reference']} in the "
     "subject line.",
 
-    "Questions regarding this RFP must be submitted in writing no later than 25 July 2026. "
-    "Alderwood will publish consolidated answers to all vendors who have registered intent "
-    "to respond. Vendors must not contact Alderwood store or marketing personnel directly "
-    "regarding this solicitation.",
+    "Vendors must submit clarification questions in writing no later than "
+    f"{RFP_META['questions_due']}. Alderwood will publish consolidated answers to all "
+    "vendors that have registered an intent to respond. Vendors must not contact "
+    "Alderwood store, marketing, or technology personnel directly in connection with "
+    "this solicitation. Any such contact may result in disqualification.",
 
-    "Shortlisted vendors shall be invited to a technical demonstration during the week of "
-    "1 September 2026. The demonstration must cover identity resolution and segment "
-    "activation using a representative sample of Alderwood's own data under a mutual "
-    "non-disclosure agreement.",
+    "Each response must include: the completed response workbook with every line item "
+    "answered; a completed pricing workbook; three customer references; a copy of the "
+    "vendor's most recent SOC 2 Type II report or equivalent attestation; and the "
+    "signed attestation at Appendix C. A response omitting any of these elements may "
+    "be scored as incomplete.",
+
+    "Alderwood shall not be liable for any cost incurred by a vendor in preparing a "
+    "response. All material submitted becomes the property of Alderwood. Vendors must "
+    "mark any commercially confidential material clearly; Alderwood will use "
+    "reasonable efforts to protect material so marked but gives no warranty.",
+]
+
+TIMELINE = [
+    ["Milestone", "Date"],
+    ["RFP issued", RFP_META["issued"]],
+    ["Registration of intent to respond due", "11 July 2026"],
+    ["Clarification questions due", RFP_META["questions_due"]],
+    ["Consolidated answers published", "1 August 2026"],
+    ["Responses due", f"{RFP_META['due']}, {RFP_META['due_time']}"],
+    ["Shortlist notified", "28 August 2026"],
+    ["Vendor demonstrations", "Week of 7 September 2026"],
+    ["Reference checks complete", "25 September 2026"],
+    ["Intent to award", "9 October 2026"],
+    ["Target contract execution", "6 November 2026"],
+]
+
+EVALUATION = [
+    ["Criterion", "Weighting"],
+    ["Functional fit", "30%"],
+    ["Information security and privacy", "25%"],
+    ["Technical architecture and scalability", "15%"],
+    ["Total cost of ownership over five years", "15%"],
+    ["Implementation approach and timeline", "8%"],
+    ["Support model and service levels", "5%"],
+    ["Vendor viability and references", "2%"],
+]
+
+GLOSSARY = [
+    ("Activation", "The delivery of a segment or profile attribute from the platform to a downstream execution system."),
+    ("CDP", "Customer data platform. The class of system sought under this solicitation."),
+    ("Identity resolution", "The process of associating records originating from different sources with a single individual."),
+    ("Known customer", "A customer profile associated with at least one directly identifying attribute, such as an email address or loyalty number."),
+    ("Loyalty member", "An individual enrolled in the Alderwood Advantage loyalty programme."),
+    ("Must", "Denotes a mandatory requirement. A response of Not Supported against a Must requirement may disqualify the response."),
+    ("Profile", "The unified record held by the platform for a single individual."),
+    ("Segment", "A defined population of customer profiles meeting a stated set of conditions."),
+    ("Should", "Denotes an important but non-disqualifying requirement."),
+    ("Tracked profile", "A customer profile counted for the purposes of subscription pricing."),
+]
+
+TERMS = [
+    "The successful vendor shall enter into Alderwood's master services agreement. "
+    "Vendors must record any exception to those terms in the exceptions log within the "
+    "response workbook. Exceptions raised after the response deadline shall not be "
+    "considered.",
+
+    "The vendor shall maintain commercial general liability insurance of not less than "
+    "five million dollars per occurrence, professional liability insurance of not less "
+    "than five million dollars, and cyber liability insurance of not less than ten "
+    "million dollars. Certificates of insurance must be provided prior to contract "
+    "execution and Alderwood must be named as an additional insured.",
+
+    "The vendor shall indemnify Alderwood against any claim arising from the vendor's "
+    "breach of its data protection obligations. Liability for a data protection breach "
+    "shall not be subject to the general limitation of liability. Any proposed cap on "
+    "data protection liability must be stated as an exception.",
+
+    "Either party may terminate for material breach on thirty days' written notice "
+    "where the breach remains uncured. Alderwood may additionally terminate for "
+    "convenience on ninety days' written notice at any point after the first "
+    "anniversary of the effective date. On termination the vendor must return or "
+    "destroy all Alderwood data in accordance with the requirements of section 3.4.",
+]
+
+ATTESTATION = [
+    "The undersigned, being duly authorised to bind the responding vendor, attests "
+    "that the information provided in this response and its accompanying workbook is "
+    "accurate and complete to the best of their knowledge; that the vendor has "
+    "disclosed all material litigation, regulatory action, and security incidents as "
+    "required by section 1; and that the pricing submitted shall remain valid for one "
+    "hundred and twenty days from the response deadline.",
+
+    "The undersigned further attests that no capability has been represented as "
+    "Standard or Configuration where it is in fact unreleased, and acknowledges that "
+    "a material misrepresentation may result in disqualification or, if discovered "
+    "after award, termination for cause.",
 ]
 
 
 def page_furniture(canvas, doc):
-    """Repeating header/footer - shows up as noise in extracted text."""
     canvas.saveState()
     canvas.setFont("Helvetica", 7.5)
     canvas.setFillGray(0.45)
     canvas.drawString(
         0.9 * inch, letter[1] - 0.55 * inch,
-        "ALDERWOOD RETAIL GROUP - CONFIDENTIAL - RFP ARG-CDP-2026-014",
+        f"{RFP_META['buyer'].upper()} - CONFIDENTIAL - RFP {RFP_META['reference']}",
     )
     canvas.drawString(
         0.9 * inch, 0.55 * inch,
-        "Customer Data Platform RFP - Issued 1 July 2026",
+        f"{RFP_META['title']} - Issued {RFP_META['issued']}",
     )
-    canvas.drawRightString(
-        letter[0] - 0.9 * inch, 0.55 * inch, f"Page {doc.page}",
-    )
+    canvas.drawRightString(letter[0] - 0.9 * inch, 0.55 * inch, f"Page {doc.page}")
     canvas.setStrokeGray(0.8)
     canvas.line(0.9 * inch, letter[1] - 0.62 * inch, letter[0] - 0.9 * inch, letter[1] - 0.62 * inch)
     canvas.line(0.9 * inch, 0.7 * inch, letter[0] - 0.9 * inch, 0.7 * inch)
     canvas.restoreState()
 
 
+def make_table(rows, widths, align_right_last=False):
+    t = Table(rows, colWidths=widths, repeatRows=1)
+    stylecmds = [
+        ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 9),
+        ("FONT", (0, 1), (-1, -1), "Helvetica", 9),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1F3864")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#BFBFBF")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F5F7FA")]),
+    ]
+    if align_right_last:
+        stylecmds.append(("ALIGN", (-1, 1), (-1, -1), "CENTER"))
+    t.setStyle(TableStyle(stylecmds))
+    return t
+
+
 def main():
     styles = getSampleStyleSheet()
-    body = ParagraphStyle(
-        "Body", parent=styles["Normal"], fontName="Helvetica", fontSize=10,
-        leading=14.5, alignment=TA_JUSTIFY, spaceAfter=9,
-    )
-    req = ParagraphStyle("Req", parent=body, leftIndent=0.32 * inch, firstLineIndent=-0.32 * inch)
-    h1 = ParagraphStyle(
-        "H1", parent=styles["Heading1"], fontName="Helvetica-Bold", fontSize=13,
-        spaceBefore=16, spaceAfter=8,
-    )
-    cover_title = ParagraphStyle(
-        "CoverTitle", parent=styles["Title"], fontName="Helvetica-Bold", fontSize=20, leading=25,
-    )
-    cover_meta = ParagraphStyle(
-        "CoverMeta", parent=body, alignment=1, fontSize=10.5, spaceAfter=3,
-    )
+    body = ParagraphStyle("Body", parent=styles["Normal"], fontName="Helvetica",
+                          fontSize=9.5, leading=14, alignment=TA_JUSTIFY, spaceAfter=8)
+    req_style = ParagraphStyle("Req", parent=body, leftIndent=0.42 * inch,
+                               firstLineIndent=-0.42 * inch, spaceAfter=7)
+    h1 = ParagraphStyle("H1", parent=styles["Heading1"], fontName="Helvetica-Bold",
+                        fontSize=13, spaceBefore=15, spaceAfter=8,
+                        textColor=colors.HexColor("#1F3864"))
+    h2 = ParagraphStyle("H2", parent=styles["Heading2"], fontName="Helvetica-Bold",
+                        fontSize=10.5, spaceBefore=11, spaceAfter=5)
+    cover_title = ParagraphStyle("CT", parent=styles["Title"], fontName="Helvetica-Bold",
+                                 fontSize=22, leading=27)
+    cover_meta = ParagraphStyle("CM", parent=body, alignment=TA_CENTER, fontSize=10.5,
+                                spaceAfter=3)
+    toc_style = ParagraphStyle("TOC", parent=body, spaceAfter=3, alignment=0)
 
     story = [
-        Spacer(1, 1.9 * inch),
+        Spacer(1, 1.7 * inch),
         Paragraph("Request for Proposal", cover_title),
-        Paragraph("Customer Data Platform", cover_title),
-        Spacer(1, 0.5 * inch),
-        Paragraph("Alderwood Retail Group", cover_meta),
-        Paragraph("RFP Reference: ARG-CDP-2026-014", cover_meta),
-        Paragraph("Issued: 1 July 2026", cover_meta),
-        Paragraph("Responses Due: 15 August 2026, 5:00 p.m. Pacific", cover_meta),
+        Paragraph(RFP_META["title"], cover_title),
+        Spacer(1, 0.45 * inch),
+        Paragraph(RFP_META["buyer"], cover_meta),
+        Paragraph(f"Reference: {RFP_META['reference']}", cover_meta),
+        Paragraph(f"Issued: {RFP_META['issued']}", cover_meta),
+        Paragraph(f"Responses due: {RFP_META['due']}, {RFP_META['due_time']}", cover_meta),
+        Spacer(1, 0.9 * inch),
+        Paragraph(
+            "This document and the accompanying response workbook are confidential and "
+            "are provided solely for the purpose of preparing a response.", cover_meta),
         PageBreak(),
-        Paragraph("1. Background and Scope", h1),
     ]
-    story += [Paragraph(p, body) for p in BACKGROUND]
-    story.append(Paragraph("2. Requirements", h1))
 
-    for heading, items in SECTIONS:
-        story.append(Paragraph(heading, h1))
-        for req_id, text in items:
-            story.append(Paragraph(f"<b>{req_id}.</b>&nbsp;&nbsp;{text}", req))
+    # ---- table of contents (entries resemble requirement lines) ----
+    story.append(Paragraph("Table of Contents", h1))
+    toc = [
+        "1.  Background and Scope",
+        "2.  Procurement Timeline",
+        "3.  Submission Instructions",
+        "4.  Evaluation Criteria",
+        "5.  Definitions",
+        "6.  Response Format and Compliance Levels",
+    ]
+    for section in SECTIONS:
+        toc.append(f"{int(section.number) + 6}.  {section.title}")
+    toc += [
+        "Appendix A.  Terms and Conditions",
+        "Appendix B.  Insurance Requirements",
+        "Appendix C.  Vendor Attestation",
+    ]
+    for line in toc:
+        story.append(Paragraph(line, toc_style))
 
     story.append(PageBreak())
-    story.append(Paragraph(APPENDIX[0], h1))
-    story += [Paragraph(p, body) for p in APPENDIX[1:]]
+    story.append(Paragraph("1. Background and Scope", h1))
+    story += [Paragraph(p, body) for p in BACKGROUND]
+
+    story.append(Paragraph("2. Procurement Timeline", h1))
+    story.append(make_table(TIMELINE, [4.0 * inch, 2.6 * inch]))
+    story.append(Spacer(1, 10))
+    story.append(Paragraph(
+        "Alderwood reserves the right to amend this timeline. Vendors that have "
+        "registered an intent to respond shall be notified in writing of any change.",
+        body))
+
+    story.append(Paragraph("3. Submission Instructions", h1))
+    story += [Paragraph(p, body) for p in SUBMISSION]
+
+    story.append(Paragraph("4. Evaluation Criteria", h1))
+    story.append(Paragraph(
+        "Responses will be scored against the weighted criteria below. Alderwood may "
+        "decline to progress any vendor scoring below sixty percent on information "
+        "security and privacy irrespective of total score.", body))
+    story.append(make_table(EVALUATION, [4.6 * inch, 2.0 * inch], align_right_last=True))
+
+    story.append(PageBreak())
+    story.append(Paragraph("5. Definitions", h1))
+    story.append(Paragraph(
+        "The following terms carry the meanings given below wherever they appear in "
+        "this document or the accompanying workbook.", body))
+    for term, meaning in GLOSSARY:
+        story.append(Paragraph(f"<b>{term}.</b> {meaning}", body))
+
+    story.append(Paragraph("6. Response Format and Compliance Levels", h1))
+    story.append(Paragraph(
+        "Every numbered requirement in sections 7 through 14 must receive one of the "
+        "six compliance levels defined below, recorded in the response workbook, "
+        "together with a supporting explanation. A compliance level given without an "
+        "explanation shall be scored as Not Supported.", body))
+    for level, definition in COMPLIANCE_DEFINITIONS:
+        story.append(Paragraph(f"<b>{level}.</b> {definition}", body))
+
+    # ---- requirements ----
+    story.append(PageBreak())
+    for section in SECTIONS:
+        story.append(Paragraph(f"{int(section.number) + 6}. {section.title}", h1))
+        if section.intro:
+            story.append(Paragraph(section.intro, body))
+        for sub in section.subsections:
+            story.append(Paragraph(f"{sub.number}  {sub.title}", h2))
+            for req in sub.items:
+                marker = f"<b>{req.rid}</b>"
+                tag = "" if req.priority == "Should" else f" <i>[{req.priority}]</i>"
+                story.append(Paragraph(f"{marker}&nbsp;&nbsp;{req.text}{tag}", req_style))
+
+    # ---- appendices ----
+    story.append(PageBreak())
+    story.append(Paragraph("Appendix A. Terms and Conditions", h1))
+    story += [Paragraph(p, body) for p in TERMS]
+
+    story.append(Paragraph("Appendix B. Insurance Requirements", h1))
+    story.append(Paragraph(
+        "Coverage limits stated in Appendix A are minimums. Alderwood may require "
+        "higher limits where the vendor will process pharmacy-derived data. "
+        "Certificates must be renewed annually for the duration of the agreement and "
+        "provided to Alderwood without request.", body))
+
+    story.append(Paragraph("Appendix C. Vendor Attestation", h1))
+    story += [Paragraph(p, body) for p in ATTESTATION]
+    story.append(Spacer(1, 30))
+    sig = [
+        ["Signature", ""],
+        ["Name", ""],
+        ["Title", ""],
+        ["Vendor legal entity", ""],
+        ["Date", ""],
+    ]
+    story.append(make_table(sig, [1.9 * inch, 4.7 * inch]))
 
     doc = SimpleDocTemplate(
-        OUT, pagesize=letter,
+        str(OUT), pagesize=letter,
         leftMargin=0.9 * inch, rightMargin=0.9 * inch,
         topMargin=0.85 * inch, bottomMargin=0.85 * inch,
-        title="RFP ARG-CDP-2026-014 - Customer Data Platform",
-        author="Alderwood Retail Group",
-        subject="Request for Proposal - Customer Data Platform",
+        title=f"RFP {RFP_META['reference']} - {RFP_META['title']}",
+        author=RFP_META["buyer"],
+        subject=f"Request for Proposal - {RFP_META['title']}",
     )
     doc.build(story, onFirstPage=page_furniture, onLaterPages=page_furniture)
 
-    total = sum(len(items) for _, items in SECTIONS)
+    total = sum(len(sub.items) for s in SECTIONS for sub in s.subsections)
     print(f"wrote {OUT} ({total} requirements)")
 
 
