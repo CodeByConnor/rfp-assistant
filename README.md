@@ -11,8 +11,8 @@ is forced to `Needs Input` rather than letting the model improvise. RFP answers
 become contractual commitments — a confidently wrong "Yes" on HIPAA is a
 materially worse outcome than an honest "we need to check this."
 
-> **Status: M0.** Test fixtures and knowledge base are built; the pipeline is
-> not. See [Milestones](#milestones). Nothing here is a working product yet.
+> **Status: M1.** Parsers work against all three formats; retrieval and
+> classification are not built yet. See [Milestones](#milestones).
 
 ## Demo data is fictional
 
@@ -22,9 +22,22 @@ retailer, **Alderwood Retail Group**. All content in `docs/` and `fixtures/`
 is invented for this project — no real vendor, buyer, pricing, or security
 posture is represented.
 
+## Usage
+
+```bash
+python -m rfp_assistant parse fixtures/rfp-alderwood-retail.xlsx
+python -m rfp_assistant parse fixtures/rfp-alderwood-retail.pdf --show 5
+python -m rfp_assistant parse <file> --json > requirements.json
+pytest                      # 36 tests
+```
+
 ## Layout
 
 ```
+rfp_assistant/
+  models.py              Requirement: id, text, section, priority, locator.
+  parsers/               One parser per format, dispatched on extension.
+tests/                   Parser suite, oracle-checked against the fixtures.
 docs/knowledge-base/     11 Meridian documents: product, architecture,
                          security, privacy, integrations, SLA/support,
                          implementation, company profile, roadmap, past
@@ -55,7 +68,7 @@ drift apart, and one answer key covers all three.
 |---|---|---|
 | `.md` | control | none — the baseline. A parser that can't get 248/248 here has a bug unrelated to document format |
 | `.xlsx` | structured table parse | **12 tabs, only 8 holding requirements** — Instructions, Pricing Workbook, Scoring Summary and Exceptions Log must not be parsed as requirement tables; metadata block above the header row on every tab; merged subsection banners interleaved with requirement rows; a worked `EXAMPLE` row per tab; buyer-owned columns (Priority, Weight, Score) interleaved with vendor-owned ones; a locked dropdown on the compliance column |
-| `.pdf` | LLM fallback extraction | requirements in flowing numbered prose, not tables; cover page and TOC whose entries resemble requirements; **188 `must`/`shall` occurrences**, with 4 pages of front matter and appendices that are pure obligation language containing *zero* requirements; repeating header/footer noise on all 19 pages |
+| `.pdf` | prose extraction | requirements in flowing numbered prose, not tables; cover page and TOC whose entries resemble requirements; **188 `must`/`shall` occurrences**, with 4 pages of front matter and appendices that are pure obligation language containing *zero* requirements; repeating header/footer noise on all 19 pages |
 
 The PDF front matter is the real trap. Submission instructions, terms and
 conditions, and the attestation page are written in dense obligation language —
@@ -105,6 +118,48 @@ The cases that carry the design:
   pharmacy PII. The gap report should surface this as deal-threatening rather
   than burying it among 247 others.
 
+## Parsers
+
+All three parsers are **structural** — no LLM call. Requirements are found by
+position and identifier shape, not by vocabulary, because vocabulary is
+exactly what the boilerplate shares with the requirements.
+
+- **xlsx** — finds requirement tables by looking for a header row pairing an
+  id-like column with a requirement-like column, rather than hardcoding tab
+  names. That correctly rejects the pricing, scoring, instructions and
+  exceptions tabs, and generalises to workbooks that name their tabs
+  differently.
+- **pdf** — drops page furniture, then treats a hierarchical identifier at the
+  start of a line as a requirement opener and stitches wrapped continuation
+  lines back on.
+- Section membership is derived from the requirement id, not the display
+  heading. The PDF numbers its requirement sections 7–14 because front matter
+  occupies 1–6, while the ids inside them still begin `1.x`. The id is the
+  thing that is stable across formats.
+
+**Limitation, stated plainly:** the fixture numbers every requirement `N.N.N`,
+and the PDF parser keys on that. A real RFP may use `REQ-4.2.3`, `4.2.3)`, or
+prose with no identifiers at all, and this parser will find nothing in those.
+That is why `parse_pdf_detailed` reports body-line coverage: a collapse toward
+zero is the signal to escalate to an LLM extraction pass rather than silently
+return a short list. The LLM fallback is not built yet.
+
+### Bugs this suite caught
+
+The fixture hazards earned their keep — each of these produced a plausible
+looking result rather than an error:
+
+- The table of contents contains *"Appendix A. Terms and Conditions"*. Treating
+  it as the appendix heading put the parser into a mode that discarded every
+  continuation line, truncating 106 requirements to their first sentence while
+  still reporting a confident 248 found.
+- The page footer extracts as one merged line (`Customer Data Platform -
+  Issued 1 July 2026 Page 7`), so a pattern anchored on the date missed it and
+  the footer was appended to whichever requirement ended the page.
+- Detecting page furniture by repetition alone ate the `[Must]` priority tags
+  that wrap onto a line of their own: they recur on nearly every page, exactly
+  like a footer. Furniture now has to sit at a page edge as well as repeat.
+
 ## Planned architecture
 
 ```
@@ -126,7 +181,8 @@ DB at this scale), small React review table on top.
 
 - [x] **M0** — Knowledge base, 248-requirement RFP fixtures (md/xlsx/pdf),
       stratified answer key
-- [ ] **M1** — Parsing: RFP file → structured `Requirement[]`
+- [x] **M1** — Parsing: RFP file → structured `Requirement[]`, all three
+      formats at 248/248 with exact text match
 - [ ] **M2** — Retrieval + classification + draft answers (CLI)
 - [ ] **M3** — Citation enforcement, `Needs Input` guardrail, RBAC filtering
 - [ ] **M4** — Review UI: upload, approve/edit, export
