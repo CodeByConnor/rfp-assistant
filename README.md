@@ -6,13 +6,32 @@ retrieves supporting product knowledge, classifies every requirement as
 flags the gaps for human review.
 
 **Core design commitment:** the system never answers a requirement it cannot
-cite. If retrieval turns up nothing above a similarity threshold, the verdict
-is forced to `Needs Input` rather than letting the model improvise. RFP answers
+cite. Every verdict must name a source document and quote it verbatim, and the
+quote is verified against that document before the answer is kept. RFP answers
 become contractual commitments — a confidently wrong "Yes" on HIPAA is a
 materially worse outcome than an honest "we need to check this."
 
-> **Status: M1.** Parsers work against all three formats; retrieval and
-> classification are not built yet. See [Milestones](#milestones).
+> **Status: M3.** Parsing, retrieval, classification, the guardrail, and the
+> gap report all work and are tested end to end offline. No live model run has
+> been made yet. See [Milestones](#milestones).
+
+## Running it costs nothing by default
+
+`respond` uses an offline stub client unless you pass `--live`, so the whole
+pipeline — retrieval, prompting, citation verification, the guardrail, the gap
+report — runs and is tested without an API key and without spending anything.
+`--live` prints a cost estimate and requires confirmation before the first
+call, and `--limit N` caps the run. Both safeguards are covered by tests.
+
+```bash
+python -m rfp_assistant respond                      # offline, free
+python -m rfp_assistant eval-retrieval               # offline, free
+python -m rfp_assistant respond --live --limit 20 --model claude-haiku-4-5
+```
+
+A full 248-requirement live run is roughly **$2.60 on Opus 5, $1.05 on Sonnet
+5, or $0.52 on Haiku 4.5** — measured from real token counts in an offline
+run, not guessed.
 
 ## Demo data is fictional
 
@@ -28,7 +47,7 @@ posture is represented.
 python -m rfp_assistant parse fixtures/rfp-alderwood-retail.xlsx
 python -m rfp_assistant parse fixtures/rfp-alderwood-retail.pdf --show 5
 python -m rfp_assistant parse <file> --json > requirements.json
-pytest                      # 36 tests
+pytest                      # 69 tests, all offline
 ```
 
 ## Layout
@@ -37,7 +56,14 @@ pytest                      # 36 tests
 rfp_assistant/
   models.py              Requirement: id, text, section, priority, locator.
   parsers/               One parser per format, dispatched on extension.
-tests/                   Parser suite, oracle-checked against the fixtures.
+  knowledge.py           Chunking + access tagging of the knowledge base.
+  retrieval.py           BM25, with access filtering applied before scoring.
+  llm.py                 Client boundary. StubClient is free and offline;
+                         AnthropicClient is the only thing that can spend.
+  classify.py            Prompting, citation verification, the guardrail.
+  report.py              Gap report, risk-ranked.
+  evaluate.py            Retrieval scoring against the gold key (free).
+tests/                   69 tests, all offline.
 docs/knowledge-base/     11 Meridian documents: product, architecture,
                          security, privacy, integrations, SLA/support,
                          implementation, company profile, roadmap, past
@@ -160,6 +186,95 @@ looking result rather than an error:
   that wrap onto a line of their own: they recur on nearly every page, exactly
   like a footer. Furniture now has to sit at a page edge as well as repeat.
 
+## What the measurements changed
+
+Two design decisions were reversed by evidence before any money was spent.
+Both measurements run offline, against the gold key, in under a second.
+
+### The similarity threshold does not work
+
+The original design — stated in this README until it was tested — was: if
+retrieval returns nothing above a similarity threshold, force `Needs Input`.
+
+Measured against the gold key, the score distributions overlap almost
+entirely:
+
+| | min | median | max |
+|---|---|---|---|
+| Answerable (n=113) | 4.50 | 15.09 | 40.48 |
+| `Needs Input` (n=11) | 5.13 | 10.47 | 32.54 |
+
+The highest-scoring unanswerable requirement (`8.3.1`, sustainability) outranks
+75% of the answerable ones. The lowest-scoring answerable one (`4.2.1`, SAML)
+falls below *every* unanswerable one. No threshold separates them.
+
+The reason is conceptual, and it generalises well beyond this project:
+**relevance and answerability are different properties.** Retrieval correctly
+surfaces the sustainability chunk — it is genuinely the most relevant passage
+in the corpus. It just says the company has no position on the topic. A
+similarity score cannot distinguish "here is your answer" from "here is the
+document confirming no answer exists."
+
+Scanning all retrieved chunks for escalation language fails too, for a related
+reason: at six chunks per query it fired on **42 of 113** answerable
+requirements, because a marker in chunk five says nothing about whether chunk
+one answers the question.
+
+So the guardrail runs *after* the model commits to its evidence:
+
+1. The model names one document and quotes it verbatim.
+2. The quote is verified to appear in that document. A quote that does not is
+   fabricated evidence, and the verdict is discarded.
+3. Escalation markers are checked **only in the cited chunk**. If the evidence
+   the model chose to rely on says "route to Legal", the answer becomes
+   `Needs Input` no matter how confident the verdict was.
+
+Only the degenerate case — retrieval returned nothing at all — is handled
+before the call, because there is nothing to send. That path is tested to make
+no model call at all.
+
+### Embeddings were not needed
+
+BM25 over 66 chunks, measured against the gold key's expected citations:
+
+| top_k | recall | all expected docs |
+|---|---|---|
+| 3 | 97.5% | 93.3% |
+| 4 | 97.5% | 95.8% |
+| **6 (default)** | **98.3%** | **97.5%** |
+| 8 | 100% | 100% |
+
+At 98.3% recall with zero dependencies, no model download, and millisecond
+queries, an embedding model would add hundreds of megabytes to buy at most 1.7
+points — and those points may be noise, since the key has only 120
+retrieval-scored items and tuning `top_k` to hit exactly 100% on it would be
+fitting to my own labels. Lexical matching works here because requirements and
+documentation share vocabulary almost verbatim: "SAML", "HIPAA", "Kafka",
+"RPO" appear on both sides.
+
+The remaining misses are interesting rather than broken. `6.2.4` asks about
+staff *certification programmes* and retrieves the *security certifications*
+section — a real lexical ambiguity that embeddings might actually fix. That is
+the measurement that would justify adding them; 1.7 points of recall is not.
+
+### RBAC is structural, not a ranking preference
+
+Access filtering happens *before* scoring, so an internal-only chunk is never
+a candidate rather than merely ranked low. Verified across all 248
+requirements at `top_k=8`: **zero** public-role queries surface the internal
+pricing document, while the internal role reaches it for every pricing
+requirement.
+
+Untagged documents default to internal. Wrongly withholding a document costs a
+human review; wrongly exposing one puts confidential material in a customer's
+hands.
+
+One test caught a subtlety worth keeping: the *public* implementation doc
+legitimately mentions `pricing-packaging.md` by name ("rates are commercially
+sensitive — see pricing-packaging.md"). That is a pointer, not a leak, and it
+doubles as an escalation signal. The test asserts on the sensitive figures and
+on chunk provenance, not on the filename string.
+
 ## Planned architecture
 
 ```
@@ -173,9 +288,9 @@ RFP (pdf/xlsx/md) → parser → Requirement[]
                    review UI (approve/edit) → export + gap report
 ```
 
-Python/FastAPI backend, Claude API for extraction and classification,
-embeddings + cosine similarity over the knowledge base (no heavyweight vector
-DB at this scale), small React review table on top.
+Python, Claude API for classification, BM25 over the knowledge base. No
+embedding model, no vector DB — see below for why that was a measurement
+rather than a preference.
 
 ## Milestones
 
@@ -183,10 +298,11 @@ DB at this scale), small React review table on top.
       stratified answer key
 - [x] **M1** — Parsing: RFP file → structured `Requirement[]`, all three
       formats at 248/248 with exact text match
-- [ ] **M2** — Retrieval + classification + draft answers (CLI)
-- [ ] **M3** — Citation enforcement, `Needs Input` guardrail, RBAC filtering
+- [x] **M2** — BM25 retrieval + classification + draft answers (CLI)
+- [x] **M3** — Citation enforcement, `Needs Input` guardrail, RBAC filtering,
+      gap report
 - [ ] **M4** — Review UI: upload, approve/edit, export
-- [ ] **M5** — Eval suite, deploy
+- [ ] **M5** — Live classification eval against the gold key, deploy
 
 ## Testing
 
@@ -196,9 +312,15 @@ DB at this scale), small React review table on top.
 - **Retrieval** — does each requirement surface its expected citation doc?
 - **Classification** — predicted verdict vs. the key's `verdict`; the primary
   quality metric across iterations.
-- **Guardrail regression** — `8.3.1` and `8.2.1`–`8.2.3` must always resolve
-  to `Needs Input`.
-- **RBAC regression** — `8.1.x` and `6.2.2` under a `public` role must never
-  retrieve or cite `pricing-packaging.md`.
+- **Guardrail** — a stub that fabricates its supporting quote must be caught
+  every time; a stub that confidently answers `Yes` to `8.3.1` and `5.1.3`
+  must be overridden to `Needs Input` by the escalation check on its own cited
+  evidence; a requirement with no retrievable evidence must produce no model
+  call at all.
+- **RBAC** — no internal-sourced chunk may reach a public-role prompt, checked
+  across all 248 requirements rather than the labelled subset.
+- **Spending safety** — `respond` must not construct the live client without
+  `--live`, and a `--live` run must show its cost estimate before prompting
+  and abort on anything but an explicit yes.
 - **Deduplication** — the 18 near-duplicate clusters should be detected, with
   the `certs` cluster's intentional divergence preserved.
