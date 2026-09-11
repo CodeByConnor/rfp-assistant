@@ -1,0 +1,605 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RFP Assistant — Review</title>
+<style>
+:root {
+  --bg: #f6f6f3; --panel: #ffffff; --ink: #1b1c1e; --muted: #686c73; --line: #e3e3de;
+  --accent: #2d58cc; --accent-ink: #ffffff; --hover: #f1f1ec;
+  --yes: #1d7549; --yes-bg: #e4f3ea; --partial: #87570a; --partial-bg: #fcefd4;
+  --roadmap: #1d5ca6; --roadmap-bg: #e2edfb; --no: #b0271f; --no-bg: #fbe5e2;
+  --ni: #67409d; --ni-bg: #eee6f8; --notice-bg: #fff3dd; --notice-ink: #6f4600;
+  --live-bg: #fbe3e1; --live-ink: #8a1c16; --demo-bg: #e7eefb; --demo-ink: #1f4a8f;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #131416; --panel: #1b1c1f; --ink: #e7e7e4; --muted: #999da5; --line: #2c2e32;
+    --accent: #7c9fff; --accent-ink: #0f1115; --hover: #222428;
+    --yes: #72d3a2; --yes-bg: #14301f; --partial: #f0c36d; --partial-bg: #33280f;
+    --roadmap: #8db9f0; --roadmap-bg: #14253a; --no: #ff8b80; --no-bg: #391612;
+    --ni: #c7a7f4; --ni-bg: #291c3a; --notice-bg: #32260f; --notice-ink: #f0c36d;
+    --live-bg: #391612; --live-ink: #ffb3aa; --demo-bg: #14253a; --demo-ink: #a9c6f2;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+[hidden] { display: none !important; }
+button, select, input, textarea { font: inherit; color: inherit; }
+
+.banner { padding: 9px 24px; font-size: 13px; }
+.banner.demo { background: var(--demo-bg); color: var(--demo-ink); }
+.banner.live { background: var(--live-bg); color: var(--live-ink); font-weight: 600; }
+.banner.stub { background: var(--notice-bg); color: var(--notice-ink); }
+
+.top {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  padding: 16px 24px; border-bottom: 1px solid var(--line); background: var(--panel);
+}
+.brand h1 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
+.brand .sub { color: var(--muted); font-size: 13px; }
+.actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+.btn {
+  display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none;
+  border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink);
+  padding: 6px 12px; border-radius: 7px; font-weight: 550; font-size: 13px; white-space: nowrap;
+}
+.btn:hover { filter: brightness(1.07); }
+.btn.ghost { background: transparent; color: var(--accent); }
+.btn.ghost:hover { background: var(--hover); filter: none; }
+.btn:disabled { opacity: .45; cursor: not-allowed; filter: none; }
+select, input[type=search], textarea {
+  border: 1px solid var(--line); background: var(--panel); border-radius: 7px; padding: 6px 9px;
+}
+select:focus, input:focus, textarea:focus, .btn:focus-visible, .filter:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 1px;
+}
+
+main { max-width: 1280px; margin: 0 auto; padding: 22px 24px 64px; }
+
+.empty { max-width: 620px; margin: 64px auto; text-align: center; }
+.empty h2 { font-size: 20px; margin: 0 0 8px; }
+.empty p { color: var(--muted); margin: 0 0 20px; }
+.empty .steps { text-align: left; display: grid; gap: 10px; margin: 26px auto 0; max-width: 480px; }
+.empty .step { display: flex; gap: 10px; color: var(--muted); font-size: 13px; }
+.empty .step b { color: var(--ink); min-width: 18px; }
+
+.runhead { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
+.runhead h2 { margin: 0; font-size: 19px; letter-spacing: -0.01em; overflow-wrap: anywhere; }
+.muted { color: var(--muted); }
+.exports { display: flex; gap: 8px; }
+
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 10px; margin-bottom: 12px; }
+.stat { background: var(--panel); border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; }
+.stat .n { font-size: 21px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.stat .l { font-size: 12px; color: var(--muted); }
+.stat.alert .n { color: var(--no); }
+
+.progress-wrap { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; font-size: 12px; color: var(--muted); }
+.progress { flex: 1; height: 6px; background: var(--line); border-radius: 99px; overflow: hidden; }
+.progress > div { height: 100%; background: var(--yes); width: 0; transition: width .25s; }
+
+.toolbar { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.filters { display: flex; gap: 4px; flex-wrap: wrap; }
+.filter {
+  border: 1px solid transparent; background: transparent; border-radius: 99px; padding: 4px 11px;
+  cursor: pointer; font-size: 13px; color: var(--muted);
+}
+.filter:hover { background: var(--hover); }
+.filter[aria-selected=true] { background: var(--panel); border-color: var(--line); color: var(--ink); font-weight: 550; }
+.filter .c { font-variant-numeric: tabular-nums; margin-left: 4px; opacity: .75; }
+#search { width: 260px; max-width: 100%; }
+
+.table-wrap { overflow-x: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+table { width: 100%; border-collapse: collapse; min-width: 760px; table-layout: fixed; }
+/* Fixed layout with explicit widths: under automatic layout the expanded
+   detail row's content redistributed widths and ballooned the id column. */
+col.c-rid { width: 76px; } col.c-pri { width: 84px; } col.c-ver { width: 170px; }
+col.c-com { width: 140px; } col.c-sta { width: 96px; }
+th {
+  text-align: left; font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--muted); padding: 9px 12px; border-bottom: 1px solid var(--line); background: var(--panel);
+  position: sticky; top: 0;
+}
+td { padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+tr.row { cursor: pointer; }
+tr.row:hover td { background: var(--hover); }
+tr.row.open td { background: var(--hover); border-bottom-color: transparent; }
+td.rid { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+td.text { overflow-wrap: anywhere; }
+td.text .t { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+td.text .s { font-size: 12px; color: var(--muted); }
+
+.badge { display: inline-block; padding: 1px 8px; border-radius: 99px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.v-yes { background: var(--yes-bg); color: var(--yes); }
+.v-partial { background: var(--partial-bg); color: var(--partial); }
+.v-roadmap { background: var(--roadmap-bg); color: var(--roadmap); }
+.v-no { background: var(--no-bg); color: var(--no); }
+.v-ni { background: var(--ni-bg); color: var(--ni); }
+.p-must { color: var(--no); font-weight: 600; }
+.flag { font-size: 11px; font-weight: 600; margin-left: 6px; color: var(--ni); }
+.flag.block { color: var(--no); }
+.status-approved { color: var(--yes); font-weight: 600; }
+.status-pending { color: var(--muted); }
+
+tr.detail td { background: var(--hover); padding: 0 12px 16px; }
+.detail-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; padding-top: 4px; }
+@media (max-width: 860px) {
+  .detail-grid { grid-template-columns: 1fr; }
+  main { padding: 16px 12px 48px; }
+  .top { padding: 14px 12px; }
+}
+.detail-grid h4 { margin: 0 0 6px; font-size: 11.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.detail-grid .req-full { margin: 0 0 12px; }
+.notice { background: var(--notice-bg); color: var(--notice-ink); border-radius: 8px; padding: 9px 11px; font-size: 13px; margin-bottom: 12px; }
+.evidence code { font-size: 12.5px; }
+blockquote {
+  margin: 8px 0 0; padding: 8px 12px; border-left: 3px solid var(--line); background: var(--panel);
+  border-radius: 0 7px 7px 0; font-size: 13px; overflow-wrap: anywhere;
+}
+.tag { font-size: 11px; font-weight: 600; margin-left: 8px; padding: 1px 7px; border-radius: 99px; }
+.tag.internal { background: var(--no-bg); color: var(--no); }
+.editor textarea { width: 100%; min-height: 104px; resize: vertical; background: var(--panel); }
+.editor .row2 { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+.editor .row2 select { min-width: 170px; }
+.editor .hint { font-size: 12px; color: var(--muted); margin-top: 8px; }
+.editor .spacer { flex: 1; }
+
+.center { text-align: center; padding: 28px; }
+
+.busy {
+  position: fixed; inset: 0; background: rgba(0,0,0,.28); display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 12px; color: #fff; font-weight: 550; z-index: 20;
+}
+.spinner { width: 30px; height: 30px; border: 3px solid rgba(255,255,255,.35); border-top-color: #fff; border-radius: 50%; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.toasts { position: fixed; right: 18px; bottom: 18px; display: grid; gap: 8px; z-index: 30; max-width: min(420px, calc(100vw - 36px)); }
+.toast { background: var(--ink); color: var(--bg); padding: 10px 14px; border-radius: 9px; font-size: 13px; box-shadow: 0 6px 20px rgba(0,0,0,.18); }
+.toast.error { background: var(--no); color: #fff; }
+</style>
+</head>
+<body>
+<div id="banner" class="banner" hidden></div>
+
+<header class="top">
+  <div class="brand">
+    <h1>RFP Assistant</h1>
+    <div class="sub">Requirement review &amp; response</div>
+  </div>
+  <div class="actions">
+    <select id="runSelect" aria-label="Open a previous run"></select>
+    <button id="sampleBtn" class="btn ghost" hidden>Load sample RFP</button>
+    <label class="btn">Upload RFP<input type="file" id="fileInput" accept=".md,.xlsx,.xlsm,.pdf" hidden></label>
+  </div>
+</header>
+
+<main>
+  <section id="empty" class="empty" hidden>
+    <h2>Review an RFP response</h2>
+    <p>Upload an RFP as .xlsx, .pdf, or .md. Every requirement is extracted, matched against the product documentation, and given a draft answer for you to review.</p>
+    <div class="steps">
+      <div class="step"><b>1</b><span>Requirements the documentation can't settle are held as <em>Needs Input</em> rather than guessed at.</span></div>
+      <div class="step"><b>2</b><span>You approve each answer. Uncertain rows need a compliance level from you before they can be approved.</span></div>
+      <div class="step"><b>3</b><span>Download the buyer's own workbook with approved answers filled in. Unapproved rows stay blank.</span></div>
+    </div>
+  </section>
+
+  <section id="workspace" hidden>
+    <div class="runhead">
+      <div>
+        <h2 id="runTitle"></h2>
+        <div id="runMeta" class="muted"></div>
+      </div>
+      <div class="exports">
+        <button id="exportMd" class="btn ghost">Gap report (.md)</button>
+        <button id="exportXlsx" class="btn">Download workbook</button>
+      </div>
+    </div>
+
+    <div id="stats" class="stats"></div>
+    <div class="progress-wrap">
+      <div class="progress"><div id="progressBar"></div></div>
+      <span id="progressText"></span>
+    </div>
+
+    <div class="toolbar">
+      <div id="filters" class="filters" role="tablist" aria-label="Filter requirements"></div>
+      <input id="search" type="search" placeholder="Search by id or text" aria-label="Search requirements">
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <colgroup><col class="c-rid"><col><col class="c-pri"><col class="c-ver"><col class="c-com"><col class="c-sta"></colgroup>
+        <thead><tr><th>Req</th><th>Requirement</th><th>Priority</th><th>Verdict</th><th>Compliance</th><th>Status</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <div id="noRows" class="muted center" hidden>No requirements in this view.</div>
+    </div>
+  </section>
+</main>
+
+<div id="busy" class="busy" hidden><div class="spinner"></div><div id="busyText">Working…</div></div>
+<div id="toasts" class="toasts" aria-live="polite"></div>
+
+<script>
+"use strict";
+
+const VERDICTS = ["Yes", "Partial", "Roadmap", "No", "Needs Input"];
+const VERDICT_CLASS = { "Yes": "v-yes", "Partial": "v-partial", "Roadmap": "v-roadmap", "No": "v-no", "Needs Input": "v-ni" };
+const FILTERS = [
+  ["attention", "Needs attention", r => r.status === "pending" && r.verdict !== "Yes"],
+  ["blocking", "Blocking", r => r.is_blocking],
+  ["escalated", "Held by guardrail", r => !!r.overridden_from],
+  ["pending", "Pending", r => r.status === "pending"],
+  ["approved", "Approved", r => r.status === "approved"],
+  ["all", "All", () => true],
+];
+const REASONS = {
+  "quote not found in cited document": "its supporting quote does not appear in the document it cited",
+  "citation not in evidence": "it cited a document it was never given",
+  "cited evidence requires escalation": "the passage it relied on says a person must answer this",
+  "relevant evidence requires escalation": "the documentation that addresses this requirement says a person must answer it",
+  "no evidence retrieved": "no documentation relevant to this requirement was found",
+};
+
+const state = { config: null, run: null, filter: "attention", query: "", open: null };
+const $ = id => document.getElementById(id);
+
+function el(tag, props = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [key, value] of Object.entries(props)) {
+    if (value == null || value === false) continue;
+    if (key === "class") node.className = value;
+    else if (key === "text") node.textContent = value;
+    else if (key.startsWith("on")) node.addEventListener(key.slice(2), value);
+    else node.setAttribute(key, value === true ? "" : value);
+  }
+  for (const child of children.flat()) {
+    if (child == null || child === false) continue;
+    node.append(child instanceof Node ? child : document.createTextNode(String(child)));
+  }
+  return node;
+}
+
+async function api(path, options = {}) {
+  const res = await fetch(path, options);
+  const type = res.headers.get("content-type") || "";
+  const body = type.includes("application/json") ? await res.json() : await res.text();
+  if (!res.ok) throw new Error((body && body.detail) || res.statusText || "request failed");
+  return body;
+}
+
+function toast(message, kind = "") {
+  const node = el("div", { class: `toast ${kind}`, text: message });
+  $("toasts").append(node);
+  setTimeout(() => node.remove(), kind === "error" ? 6500 : 3800);
+}
+
+function busy(text) {
+  $("busyText").textContent = text || "";
+  $("busy").hidden = !text;
+}
+
+// ---------------------------------------------------------------- config
+
+function renderBanner() {
+  const c = state.config, b = $("banner");
+  b.hidden = false;
+  if (c.live) {
+    b.className = "banner live";
+    b.textContent = `Live — uploads call ${c.model} and are billed to your API account. Each upload is capped at ${c.limit} requirements.`;
+  } else if (c.mode === "replay") {
+    b.className = "banner demo";
+    b.textContent = "Demo mode — verdicts are replayed from the hand-labelled answer key, not produced by a model. No model is called and nothing is billed. The guardrail still checks every response.";
+  } else {
+    b.className = "banner stub";
+    b.textContent = "Offline stub — every verdict is a placeholder so the workflow can be exercised. No model is called and nothing is billed.";
+  }
+  if (c.role !== "public") {
+    b.textContent += "  Internal documents are visible to this server; its runs cannot be exported to a customer.";
+  }
+}
+
+// ---------------------------------------------------------------- runs
+
+async function loadRuns(selectId) {
+  const runs = await api("/api/runs");
+  const select = $("runSelect");
+  select.replaceChildren(el("option", { value: "", text: runs.length ? "Previous runs…" : "No previous runs" }));
+  for (const run of runs) {
+    const when = new Date(run.created_at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+    select.append(el("option", { value: run.id, text: `${run.source_name} · ${when} · ${run.approved}/${run.total}` }));
+  }
+  select.value = selectId || "";
+  select.disabled = !runs.length;
+  return runs;
+}
+
+async function openRun(id) {
+  busy("Loading…");
+  try {
+    showRun(await api(`/api/runs/${encodeURIComponent(id)}`));
+  } catch (err) {
+    toast(err.message, "error");
+  } finally {
+    busy("");
+  }
+}
+
+function showRun(run) {
+  state.run = run;
+  state.open = null;
+  state.query = "";
+  $("search").value = "";
+  const attention = run.rows.filter(FILTERS[0][2]).length;
+  state.filter = attention ? "attention" : "all";
+  $("runSelect").value = run.id;
+  render();
+}
+
+async function upload(file) {
+  if (!file) return;
+  const form = new FormData();
+  form.append("file", file);
+  busy(`Reading ${file.name} and drafting answers…`);
+  try {
+    const run = await api("/api/runs", { method: "POST", body: form });
+    await loadRuns(run.id);
+    showRun(run);
+    toast(`${run.counts.total} requirements extracted`);
+  } catch (err) {
+    toast(err.message, "error");
+  } finally {
+    busy("");
+    $("fileInput").value = "";
+  }
+}
+
+async function loadSample() {
+  busy("Drafting answers for the sample RFP…");
+  try {
+    const run = await api("/api/sample", { method: "POST" });
+    await loadRuns(run.id);
+    showRun(run);
+    toast(`${run.counts.total} requirements extracted`);
+  } catch (err) {
+    toast(err.message, "error");
+  } finally {
+    busy("");
+  }
+}
+
+async function download(kind) {
+  const run = state.run;
+  const path = kind === "xlsx" ? `/api/runs/${run.id}/export.xlsx` : `/api/runs/${run.id}/report.md`;
+  try {
+    const res = await fetch(path);
+    if (!res.ok) {
+      let message = res.statusText;
+      try { message = (await res.json()).detail || message; } catch (_) {}
+      throw new Error(message);
+    }
+    const blob = await res.blob();
+    const disposition = res.headers.get("content-disposition") || "";
+    const match = disposition.match(/filename="?([^";]+)"?/);
+    const a = el("a", { href: URL.createObjectURL(blob), download: match ? match[1] : `rfp.${kind}` });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    if (kind === "xlsx") {
+      const written = res.headers.get("x-export-written");
+      const pending = res.headers.get("x-export-pending");
+      const withheld = Number(res.headers.get("x-export-citations-withheld") || 0);
+      let note = `Wrote ${written} approved answers. ${pending} unapproved left blank.`;
+      if (withheld) note += ` ${withheld} internal citations withheld.`;
+      toast(note);
+    }
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+// ---------------------------------------------------------------- render
+
+function render() {
+  const run = state.run;
+  $("empty").hidden = !!run;
+  $("workspace").hidden = !run;
+  if (!run) return;
+
+  $("runTitle").textContent = run.source_name;
+  const when = new Date(run.created_at).toLocaleString();
+  const mode = run.mode === "replay" ? "demo replay" : run.mode;
+  $("runMeta").textContent = `${run.counts.total} requirements · ${run.source_format.toUpperCase()} · ${mode} · ${when}`;
+  $("exportXlsx").disabled = run.role !== "public";
+  $("exportXlsx").title = run.role !== "public" ? "Runs made with internal documents visible cannot be exported" : "";
+
+  renderStats();
+  renderFilters();
+  renderRows();
+}
+
+function renderStats() {
+  const c = state.run.counts;
+  const cards = [
+    ["Requirements", c.total],
+    ...VERDICTS.map(v => [v, c.verdicts[v] || 0]),
+    ["Blocking", c.blocking, c.blocking > 0],
+    ["Held by guardrail", c.escalated],
+  ];
+  $("stats").replaceChildren(...cards.map(([label, n, alert]) =>
+    el("div", { class: `stat${alert ? " alert" : ""}` }, el("div", { class: "n", text: n }), el("div", { class: "l", text: label }))
+  ));
+  const pct = c.total ? Math.round((c.approved / c.total) * 100) : 0;
+  $("progressBar").style.width = `${pct}%`;
+  $("progressText").textContent = `${c.approved} of ${c.total} approved`;
+}
+
+function renderFilters() {
+  const rows = state.run.rows;
+  $("filters").replaceChildren(...FILTERS.map(([key, label, test]) =>
+    el("button", {
+      class: "filter", role: "tab", "aria-selected": String(state.filter === key),
+      onclick: () => { state.filter = key; state.open = null; renderFilters(); renderRows(); },
+    }, label, el("span", { class: "c", text: rows.filter(test).length }))
+  ));
+}
+
+function visibleRows() {
+  const test = FILTERS.find(f => f[0] === state.filter)[2];
+  const q = state.query.trim().toLowerCase();
+  return state.run.rows.filter(r => test(r) && (!q || r.rid.includes(q) || r.text.toLowerCase().includes(q)));
+}
+
+function renderRows() {
+  const rows = visibleRows();
+  const body = $("rows");
+  body.replaceChildren();
+  $("noRows").hidden = rows.length > 0;
+  for (const row of rows) {
+    const open = state.open === row.rid;
+    const tr = el("tr", {
+      class: `row${open ? " open" : ""}`, tabindex: "0", "aria-expanded": String(open),
+      onclick: () => toggle(row.rid),
+      onkeydown: e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(row.rid); } },
+    },
+      el("td", { class: "rid", text: row.rid }),
+      el("td", { class: "text" },
+        el("div", { class: "t", text: row.text }),
+        el("div", { class: "s", text: row.section_title })),
+      el("td", { class: row.priority === "Must" ? "p-must" : "", text: row.priority || "—" }),
+      el("td", {},
+        el("span", { class: `badge ${VERDICT_CLASS[row.verdict] || ""}`, text: row.verdict }),
+        row.is_blocking ? el("span", { class: "flag block", text: "BLOCKING" }) : null,
+        row.overridden_from ? el("span", { class: "flag", text: "HELD" }) : null),
+      el("td", { class: row.compliance_level ? "" : "muted", text: row.narrative ? "narrative" : (row.compliance_level || "—") }),
+      el("td", { class: `status-${row.status}`, text: row.status === "approved" ? "Approved" : "Pending" }),
+    );
+    body.append(tr);
+    if (open) body.append(el("tr", { class: "detail" }, el("td", { colspan: "6" }, detail(row))));
+  }
+}
+
+function toggle(rid) {
+  state.open = state.open === rid ? null : rid;
+  renderRows();
+}
+
+function detail(row) {
+  const left = el("div", {},
+    el("h4", { text: `Requirement ${row.rid}` }),
+    el("p", { class: "req-full", text: row.text }),
+  );
+  if (row.overridden_from) {
+    left.append(el("div", { class: "notice" },
+      el("strong", { text: "Held by the guardrail. " }),
+      `The model answered “${row.overridden_from}”, but ${REASONS[row.override_reason] || row.override_reason}. It needs your answer.`));
+  }
+  const evidence = el("div", { class: "evidence" }, el("h4", { text: "Evidence" }));
+  if (row.citation) {
+    evidence.append(el("div", {},
+      el("code", { text: row.citation }),
+      row.citation_access !== "public" ? el("span", { class: "tag internal", text: "internal — never exported" }) : null));
+    if (row.supporting_quote) evidence.append(el("blockquote", { text: row.supporting_quote }));
+  } else {
+    evidence.append(el("div", { class: "muted", text: "No supporting source." }));
+  }
+  left.append(evidence);
+
+  const textarea = el("textarea", { "aria-label": "Draft answer" });
+  textarea.value = row.answer;
+
+  let select = null;
+  if (!row.narrative) {
+    select = el("select", { "aria-label": "Compliance level" },
+      el("option", { value: "", text: "Compliance level…" }),
+      ...state.config.compliance_levels.map(level => el("option", { value: level, text: level })));
+    select.value = row.compliance_level || "";
+  }
+
+  const approved = row.status === "approved";
+  const changes = () => {
+    const patch = {};
+    if (textarea.value.trim() !== row.answer) patch.answer = textarea.value;
+    if (select && select.value !== (row.compliance_level || "")) patch.compliance_level = select.value;
+    return patch;
+  };
+
+  const save = el("button", { class: "btn ghost", onclick: e => { e.stopPropagation(); submit(row, changes(), false); } }, "Save");
+  const act = approved
+    ? el("button", { class: "btn ghost", onclick: e => { e.stopPropagation(); submit(row, { status: "pending" }, false); } }, "Reopen")
+    : el("button", { class: "btn", onclick: e => { e.stopPropagation(); submit(row, { ...changes(), status: "approved" }, true); } }, "Approve");
+
+  let hint = "";
+  if (!approved) {
+    if (row.verdict === "Needs Input" && !row.edited) hint = "Write the answer before approving — the text above is a placeholder, not a response.";
+    else if (!row.narrative && !row.compliance_level) hint = "Pick a compliance level before approving. The model could not settle one for this requirement.";
+  }
+
+  const editor = el("div", { class: "editor", onclick: e => e.stopPropagation() },
+    el("h4", { text: approved ? "Approved answer" : "Draft answer" }),
+    textarea,
+    el("div", { class: "row2" }, select || el("span", { class: "muted", text: "Narrative question — no compliance level" }), el("span", { class: "spacer" }), save, act),
+    hint ? el("div", { class: "hint", text: hint }) : null,
+  );
+  return el("div", { class: "detail-grid" }, left, editor);
+}
+
+async function submit(row, patch, advance) {
+  if (!Object.keys(patch).length) { toast("No changes to save"); return; }
+  try {
+    const res = await api(`/api/runs/${state.run.id}/rows/${encodeURIComponent(row.rid)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+    const i = state.run.rows.findIndex(r => r.rid === row.rid);
+    state.run.rows[i] = res.row;
+    state.run.counts = res.counts;
+    if (advance) {
+      const next = visibleRows().find(r => r.status === "pending" && r.rid !== row.rid);
+      state.open = next ? next.rid : null;
+    }
+    renderStats();
+    renderFilters();
+    renderRows();
+    loadRuns(state.run.id);
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+// ---------------------------------------------------------------- init
+
+async function init() {
+  $("fileInput").addEventListener("change", e => upload(e.target.files[0]));
+  $("sampleBtn").addEventListener("click", loadSample);
+  $("runSelect").addEventListener("change", e => { if (e.target.value) openRun(e.target.value); });
+  $("exportXlsx").addEventListener("click", () => download("xlsx"));
+  $("exportMd").addEventListener("click", () => download("md"));
+  $("search").addEventListener("input", e => { state.query = e.target.value; state.open = null; renderRows(); });
+
+  try {
+    state.config = await api("/api/config");
+  } catch (err) {
+    toast(`Could not reach the server: ${err.message}`, "error");
+    return;
+  }
+  renderBanner();
+  $("sampleBtn").hidden = !state.config.sample;
+
+  const runs = await loadRuns();
+  if (runs.length) await openRun(runs[0].id);
+  else render();
+}
+
+init();
+</script>
+</body>
+</html>

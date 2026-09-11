@@ -11,9 +11,9 @@ quote is verified against that document before the answer is kept. RFP answers
 become contractual commitments — a confidently wrong "Yes" on HIPAA is a
 materially worse outcome than an honest "we need to check this."
 
-> **Status: M3.** Parsing, retrieval, classification, the guardrail, and the
-> gap report all work and are tested end to end offline. No live model run has
-> been made yet. See [Milestones](#milestones).
+> **Status: M4.** Parsing, retrieval, classification, the guardrail, the gap
+> report, and the review app all work and are tested end to end offline. No
+> live model run has been made yet. See [Milestones](#milestones).
 
 ## Running it costs nothing by default
 
@@ -33,6 +33,38 @@ A full 248-requirement live run is roughly **$2.60 on Opus 5, $1.05 on Sonnet
 5, or $0.52 on Haiku 4.5** — measured from real token counts in an offline
 run, not guessed.
 
+## The review app
+
+```bash
+python -m rfp_assistant serve          # http://127.0.0.1:8765, offline demo
+```
+
+Upload an RFP (or load the sample), work through the answers, and download
+**the buyer's own workbook with approved answers written into it** — the
+filled-in spreadsheet is the actual deliverable, so the export writes into
+the original rather than producing a new file. The buyer's scoring formulas,
+dropdowns, and formatting survive the round trip.
+
+The approval rules are where the guardrail meets the human:
+
+- A row with no compliance level cannot be approved. Only unambiguous verdicts
+  pre-fill one (`Yes` → Standard, `No` → Not Supported, `Roadmap` → Roadmap).
+  `Partial` could be Configuration, Customization, or Third-Party, and the
+  buyer scores those differently, so a person picks.
+- A `Needs Input` row cannot be approved with the guardrail's placeholder
+  text. Someone has to write the answer.
+- Editing an approved answer sends it back to pending.
+- Only approved rows reach the export. Citations to internal documents are
+  never written, and a run made with internal documents visible cannot be
+  exported at all.
+
+By default the app runs in **demo mode**: verdicts are replayed from the
+hand-labelled answer key rather than produced by a model, and a banner on
+every page says so. The guardrail still runs over every replayed response, so
+the demo shows real holds. `serve --live` switches to the real model after a
+terminal confirmation with a per-upload cost estimate and cap; nothing in the
+browser can switch modes.
+
 ## Demo data is fictional
 
 This isn't built against a real company's documentation. Everything targets a
@@ -47,7 +79,7 @@ posture is represented.
 python -m rfp_assistant parse fixtures/rfp-alderwood-retail.xlsx
 python -m rfp_assistant parse fixtures/rfp-alderwood-retail.pdf --show 5
 python -m rfp_assistant parse <file> --json > requirements.json
-pytest                      # 69 tests, all offline
+pytest                      # 117 tests, all offline (1 known-gap xfail)
 ```
 
 ## Layout
@@ -63,7 +95,11 @@ rfp_assistant/
   classify.py            Prompting, citation verification, the guardrail.
   report.py              Gap report, risk-ranked.
   evaluate.py            Retrieval scoring against the gold key (free).
-tests/                   69 tests, all offline.
+  review.py              Review runs: approval rules, storage.
+  export.py              Write approved answers into the buyer's workbook.
+  workbook.py            Vendor-column discovery shared by review and export.
+  web/                   FastAPI app + a single-page review UI, no build step.
+tests/                   117 tests, all offline.
 docs/knowledge-base/     11 Meridian documents: product, architecture,
                          security, privacy, integrations, SLA/support,
                          implementation, company profile, roadmap, past
@@ -225,13 +261,60 @@ So the guardrail runs *after* the model commits to its evidence:
 1. The model names one document and quotes it verbatim.
 2. The quote is verified to appear in that document. A quote that does not is
    fabricated evidence, and the verdict is discarded.
-3. Escalation markers are checked **only in the cited chunk**. If the evidence
-   the model chose to rely on says "route to Legal", the answer becomes
-   `Needs Input` no matter how confident the verdict was.
+3. Escalation language is checked in two passages: the one holding the
+   model's quote, and the one across all supplied evidence that best matches
+   the requirement. If either says "route to Legal", the answer becomes
+   `Needs Input` however confident the verdict. Why two is below.
 
 Only the degenerate case — retrieval returned nothing at all — is handled
 before the call, because there is nothing to send. That path is tested to make
 no model call at all.
+
+### Escalating on the whole cited chunk over-fired
+
+The first version scanned the entire cited chunk for escalation language. The
+review app's demo mode exposed the problem at once: clean answers were being
+held. Two causes, both measured:
+
+- **A loose marker.** A bare `route to` matched *"no direct public route to the
+  data tier"* in the security whitepaper and held every network-security answer.
+- **Chunk granularity.** CCPA, GDPR, and model-training answers share a section
+  with the Washington health-data bullet that says "route to Legal". One bullet
+  held the whole section.
+
+Checking only the passage holding the model's quote fixes that, but it can be
+evaded: a model could quote a harmless neighbouring sentence and step around
+the escalation beside it. So the second check keys on the passage that best
+matches the *requirement*, which depends on nothing the model chose.
+
+Measured on the gold key's 124 public-role items with two clients: a replay of
+the labelled verdicts (realistic citations), and an adversarial stub that
+answers "Yes" to everything and cites its first evidence block.
+
+| Rule | Replay: `Needs Input` caught | Replay: false holds | Adversarial: caught | Adversarial: false holds |
+|---|---|---|---|---|
+| Whole cited chunk (original) | 11/11 | 6 | 7/11 | 6 |
+| Whole cited chunk, marker fixed | 11/11 | 6 | 8/11 | 6 |
+| Quote's passage only | 11/11 | 0 | 6/11 | 0 |
+| **Quote's passage + best-matching passage** | **11/11** | **1** | **8/11** | **1** |
+
+The chosen rule keeps every catch of the whole-chunk rule at one-sixth the
+false holds. It catches two more than quote-only checking, including `5.1.3`,
+where the stub quoted a harmless sentence right beside the Washington
+escalation — the evasion case. It costs one false hold (`5.1.1`, a lexical tie
+between the CCPA and Washington bullets), which costs a reviewer a click.
+Getting there needed one more fix: splitting passages on blank lines separated
+a question in the answer library from the "route to Legal" answer beneath it,
+so passages now split only at bullets and table rows.
+
+**The gap this cannot close.** All three adversarial misses are public-role
+pricing questions (`8.1.1`, `8.1.2`, `8.1.4`). No public document mentions
+pricing, so there is no escalation language anywhere to trigger on, and a
+model that answers "Yes" while quoting a real but irrelevant sentence passes
+every lexical check. That case rests on the model's own judgment, which is
+what the one live eval run exists to measure. It is pinned in the suite as a
+strict `xfail`: the day it starts passing, the test fails and forces an update
+here.
 
 ### Embeddings were not needed
 
@@ -301,7 +384,8 @@ rather than a preference.
 - [x] **M2** — BM25 retrieval + classification + draft answers (CLI)
 - [x] **M3** — Citation enforcement, `Needs Input` guardrail, RBAC filtering,
       gap report
-- [ ] **M4** — Review UI: upload, approve/edit, export
+- [x] **M4** — Review app: upload, approve/edit, export into the buyer's
+      own workbook
 - [ ] **M5** — Live classification eval against the gold key, deploy
 
 ## Testing
@@ -322,5 +406,10 @@ rather than a preference.
 - **Spending safety** — `respond` must not construct the live client without
   `--live`, and a `--live` run must show its cost estimate before prompting
   and abort on anything but an explicit yes.
+- **Review and export** — approval requires a compliance level on scored rows
+  and a written answer on `Needs Input` rows; only approved rows are exported;
+  the buyer's formulas and dropdowns survive; internal citations are withheld
+  and internal-role runs refuse to export; run ids and upload filenames can
+  never reach the filesystem.
 - **Deduplication** — the 18 near-duplicate clusters should be detected, with
   the `certs` cluster's intentional divergence preserved.

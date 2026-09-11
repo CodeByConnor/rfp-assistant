@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "fixtures"))
 
 from rfp_assistant.classify import (  # noqa: E402
+    ESCALATION_RE,
     NEEDS_INPUT,
     build_user_prompt,
     classify_all,
@@ -26,7 +27,7 @@ from rfp_assistant.knowledge import (  # noqa: E402
     PUBLIC,
     load_knowledge_base,
 )
-from rfp_assistant.llm import StubClient  # noqa: E402
+from rfp_assistant.llm import ReplayClient, StubClient  # noqa: E402
 from rfp_assistant.parsers import parse  # noqa: E402
 from rfp_assistant.retrieval import BM25Retriever  # noqa: E402
 
@@ -121,18 +122,74 @@ def test_citation_outside_evidence_is_rejected(retriever, requirements):
     assert result.override_reason == "citation not in evidence"
 
 
-def test_escalation_marker_in_cited_chunk_overrides_a_confident_verdict(
-    retriever, requirements
-):
+ESCALATION_REASONS = {
+    "cited evidence requires escalation",
+    "relevant evidence requires escalation",
+}
+
+
+def test_escalation_overrides_a_confident_verdict(retriever, requirements):
     """8.3.1 and 5.1.3 are the cases a similarity threshold cannot catch: the
     retrieved evidence is highly relevant and explicitly says a human must
     answer."""
     client = StubClient(verdict="Yes")
-    for rid in ("8.3.1", "5.1.3"):
+    for rid in ("8.3.1", "5.1.3", "8.2.1", "8.2.3"):
         result, _ = classify_requirement(requirements[rid], retriever, client)
         assert result.verdict == NEEDS_INPUT, rid
-        assert result.override_reason == "cited evidence requires escalation"
+        assert result.override_reason in ESCALATION_REASONS, rid
         assert result.overridden_from == "Yes"
+
+
+def test_escalation_cannot_be_dodged_by_quoting_a_harmless_sentence(
+    retriever, requirements
+):
+    """5.1.3 asks about Washington health data. The stub quotes the first
+    sentence of its evidence rather than the Washington bullet -- the move an
+    evasive model would make. The passage that best matches the requirement
+    says to route to Legal, so the answer is held whatever was quoted."""
+    result, _ = classify_requirement(
+        requirements["5.1.3"], retriever, StubClient(verdict="Yes")
+    )
+    assert not ESCALATION_RE.search(result.supporting_quote), "premise: quote avoids the marker"
+    assert result.verdict == NEEDS_INPUT
+    assert result.override_reason == "relevant evidence requires escalation"
+
+
+def test_a_clean_answer_is_not_held_by_an_escalation_elsewhere_in_its_section(
+    retriever, requirements
+):
+    """Regression: GDPR and model-training answers share a section with the
+    Washington bullet that says route to Legal. Scanning the whole chunk held
+    them; they are clean answers and must pass."""
+    client = ReplayClient(GOLD)
+    for rid in ("5.1.2", "5.1.8"):
+        result, _ = classify_requirement(requirements[rid], retriever, client)
+        assert result.verdict == "Yes", (rid, result.override_reason)
+
+
+def test_prose_mentioning_a_route_is_not_escalation(retriever, requirements):
+    """Regression: a bare "route to" marker matched "no direct public route to
+    the data tier" and held every network-security answer."""
+    assert not ESCALATION_RE.search("There is no direct public route to the data tier.")
+    assert ESCALATION_RE.search("Route all contractual questions to Legal.")
+    result, _ = classify_requirement(requirements["4.5.1"], retriever, ReplayClient(GOLD))
+    assert result.verdict == "Yes", result.override_reason
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Known gap: a confident answer quoting real but irrelevant evidence, where "
+        "the evidence carries no escalation language, is left to the model's "
+        "judgment. No public document mentions pricing, so nothing lexical fires. "
+        "If this starts passing, the guardrail improved -- update the README."
+    ),
+)
+def test_known_gap_confident_answer_from_irrelevant_evidence(retriever, requirements):
+    result, _ = classify_requirement(
+        requirements["8.1.1"], retriever, StubClient(verdict="Yes")
+    )
+    assert result.verdict == NEEDS_INPUT
 
 
 def test_no_evidence_means_no_model_call(retriever):

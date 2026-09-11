@@ -113,3 +113,40 @@ class BM25Retriever:
             if hit.chunk.doc not in seen:
                 seen.append(hit.chunk.doc)
         return seen
+
+    def best_passage(self, query: str, chunks: list[Chunk]) -> str:
+        """The single passage across `chunks` that best matches `query`.
+
+        Scored by the summed IDF of the query terms a passage shares, with ties
+        going to the higher-ranked chunk. Returns "" if nothing overlaps.
+        """
+        terms = set(tokenize(query))
+        best, best_score = "", 0.0
+        for chunk in chunks:
+            for passage in split_passages(chunk.text):
+                score = sum(self._idf.get(t, 0.0) for t in terms & set(tokenize(passage)))
+                if score > best_score:
+                    best, best_score = passage, score
+        return best
+
+
+BULLET_RE = re.compile(r"^\s*(?:[-*]|\|)\s")
+
+
+def split_passages(text: str) -> list[str]:
+    """Split chunk text at bullet and table-row boundaries.
+
+    Paragraphs are deliberately kept whole. Splitting on blank lines as well
+    separated a question in the past-answers library from the answer beneath
+    it saying "route to Legal", and that escalation went unseen.
+    """
+    passages: list[str] = []
+    current: list[str] = []
+    for line in text.splitlines():
+        if BULLET_RE.match(line) and any(part.strip() for part in current):
+            passages.append("\n".join(current))
+            current = []
+        current.append(line)
+    if current:
+        passages.append("\n".join(current))
+    return [p for p in passages if p.strip()]

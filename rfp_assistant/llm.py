@@ -19,6 +19,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from .retrieval import split_passages, tokenize
+
 DEFAULT_MODEL = "claude-opus-5"
 
 # Rough pre-flight estimate. Deliberately not `count_tokens`, which is an API
@@ -89,6 +91,51 @@ def estimate_tokens(text: str) -> int:
     return max(1, int(len(text) / CHARS_PER_TOKEN))
 
 
+EVIDENCE_RE = re.compile(r"^\[evidence \d+\] ([^\s|]+)[^\n]*\n", re.M)
+
+
+def _evidence_blocks(user: str) -> list[tuple[str, str]]:
+    """Split a classification prompt into (document, text) evidence blocks."""
+    matches = list(EVIDENCE_RE.finditer(user))
+    blocks = []
+    for i, m in enumerate(matches):
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(user)
+        blocks.append((m.group(1), user[m.end():end]))
+    return blocks
+
+
+def _requirement_id(user: str) -> str:
+    m = re.match(r"Requirement (\S+)", user)
+    return m.group(1) if m else ""
+
+
+def _requirement_text(user: str) -> str:
+    lines = user.splitlines()
+    return lines[1] if len(lines) > 1 else ""
+
+
+def _plain(text: str) -> str:
+    """Strip markdown emphasis and list/table markers so a passage reads as prose."""
+    text = re.sub(r"\*\*|__|`", "", text)
+    text = re.sub(r"^\s*[-*|]\s*", "", text)
+    text = text.replace(" | ", "; ").strip(" |")
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _first_substantive_passage(text: str) -> str:
+    """The whole passage around the first line with real content.
+
+    Quoting the full passage rather than a single wrapped line keeps sentences
+    intact, and it leaves the guardrail's view unchanged: the guardrail checks
+    the passage containing the quote, which is this same passage.
+    """
+    for passage in split_passages(text):
+        for line in passage.splitlines():
+            if len(line.strip("- *#|").strip()) > 40:
+                return re.sub(r"\s+", " ", passage).strip()
+    return ""
+
+
 class StubClient:
     """Deterministic offline client. Never makes a network call.
 
@@ -104,22 +151,26 @@ class StubClient:
         self.fabricate_quote = fabricate_quote
         self.calls: list[tuple[str, str]] = []
 
+    def _pick(self, blocks: list[tuple[str, str]], user: str) -> int:
+        """Which evidence block to cite. The plain stub always cites the first."""
+        return 0
+
+    def _quote(self, text: str, user: str) -> str:
+        """What to quote from the chosen block. The plain stub quotes the first
+        substantive passage, relevant or not -- the careless-model case."""
+        return _first_substantive_passage(text)
+
     def complete(self, system: str, user: str) -> LLMResponse:
         self.calls.append((system, user))
 
-        docs = re.findall(r"^\[evidence \d+\] ([^\s|]+)", user, re.M)
-        citation = docs[0] if docs else ""
-
-        quote = ""
-        if not self.fabricate_quote:
-            body = user.split("[evidence 1]", 1)[-1]
-            for line in body.splitlines()[1:]:
-                stripped = line.strip("- *#").strip()
-                if len(stripped) > 40:
-                    quote = stripped
-                    break
-        else:
-            quote = "This sentence does not appear anywhere in the evidence."
+        citation = quote = ""
+        blocks = _evidence_blocks(user)
+        if blocks:
+            citation, text = blocks[self._pick(blocks, user)]
+            if self.fabricate_quote:
+                quote = "This sentence does not appear anywhere in the evidence."
+            else:
+                quote = self._quote(text, user)
 
         return LLMResponse(
             data={
@@ -178,3 +229,72 @@ class AnthropicClient:
                 calls=1,
             ),
         )
+
+
+class ReplayClient(StubClient):
+    """Offline demo client that replays hand-labelled verdicts.
+
+    Exists so the review workflow can be shown without an API key. The verdicts
+    come from the gold answer key, not from a model, and the UI says so in a
+    banner on every page. Where the key names the document an answer should
+    cite and retrieval surfaced it, that document is cited; otherwise the first
+    evidence block is. Everything downstream -- including the guardrail's
+    citation and escalation checks -- runs over these responses exactly as it
+    would over a real model's, so a replayed "Yes" can still be held.
+    """
+
+    def __init__(self, gold_path, *, default: str = "Yes") -> None:
+        super().__init__(verdict=default)
+        self.model = "replay"
+        self._default = default
+        with open(gold_path) as fh:
+            gold = json.load(fh)["requirements"]
+        public = [g for g in gold if g.get("role", "public") == "public"]
+        self.verdicts = {g["id"]: g["verdict"] for g in public}
+        self.citations = {g["id"]: g.get("citations") or [] for g in public}
+
+    def _pick(self, blocks: list[tuple[str, str]], user: str) -> int:
+        wanted = self.citations.get(_requirement_id(user), [])
+        return next((i for i, (doc, _) in enumerate(blocks) if doc in wanted), 0)
+
+    def _quote(self, text: str, user: str) -> str:
+        """Quote the passage in the block that best matches the requirement,
+        as a careful model would, instead of whatever comes first."""
+        wanted = set(tokenize(_requirement_text(user)))
+        best, best_score = "", 0
+        for passage in split_passages(text):
+            # A table header row or a document's front matter shares vocabulary
+            # with the question ("Uptime SLA", "Uptime commitment") but answers
+            # nothing, so neither is quoted.
+            if len(_plain(passage)) <= 40 or "|---" in passage or "Doc type:" in passage:
+                continue
+            score = len(wanted & set(tokenize(passage)))
+            if score > best_score:
+                best, best_score = passage, score
+        return re.sub(r"\s+", " ", best).strip() if best else _first_substantive_passage(text)
+
+    def complete(self, system: str, user: str) -> LLMResponse:
+        self.verdict = self.verdicts.get(_requirement_id(user), self._default)
+        response = super().complete(system, user)
+        data = response.data
+        if data["verdict"] == "Needs Input":
+            data.update(
+                citation="",
+                supporting_quote="",
+                answer="The documentation does not settle this requirement. It needs an answer from the account team.",
+            )
+        else:
+            data["answer"] = _plain(data["supporting_quote"]) or data["answer"]
+        return response
+
+
+def estimate_run_cost(
+    requirements: int, model: str, *, top_k: int = 6, avg_requirement_chars: int = 180
+) -> float:
+    """Pre-flight cost estimate for `requirements` classifications."""
+    tokens_in = requirements * (
+        int(avg_requirement_chars / CHARS_PER_TOKEN) + top_k * 220 + 260
+    )
+    tokens_out = requirements * 160
+    rate_in, rate_out = PRICING.get(model, PRICING[DEFAULT_MODEL])
+    return (tokens_in / 1e6) * rate_in + (tokens_out / 1e6) * rate_out

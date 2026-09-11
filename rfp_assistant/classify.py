@@ -1,34 +1,39 @@
 """Classify each requirement against retrieved evidence, with the guardrail.
 
-The guardrail is the reason this project exists, and its design is the result
-of two measurements rather than intuition -- both run before any money was
-spent (see README, "What the measurements changed").
+The guardrail is the reason this project exists. Its current shape is the
+third design, and each change was forced by a measurement against the gold key
+rather than by intuition (see README, "What the measurements changed").
 
-The obvious design is a retrieval-score threshold: if nothing scores highly,
-answer `Needs Input`. Measured against the gold key, that does not work. The
-score distributions of answerable and unanswerable requirements overlap almost
-entirely, because *relevance and answerability are different properties*. The
-knowledge base discusses sustainability at length -- it says there is no
-company position on it -- so the sustainability requirement retrieves a highly
-relevant chunk that contains no answer. It scored above 75% of the
-requirements that genuinely could be answered.
+1. A retrieval-score threshold does not work. Answerable and unanswerable
+   requirements score in overlapping ranges, because relevance and
+   answerability are different properties: the sustainability requirement
+   retrieves a highly relevant chunk that says no company position exists.
+2. Scanning the whole cited chunk for escalation language catches the right
+   cases but over-fires. Chunks bundle neighbouring material, so the
+   Washington health-data bullet that says "route to Legal" held the clean
+   CCPA, GDPR, and model-training answers sharing its section -- 6 false holds
+   among labelled answerable requirements.
+3. Checking only the passage holding the model's quote fixes that, but is
+   evadable: a model could quote a harmless sentence from the same chunk and
+   step around the escalation beside it.
 
-Scanning all retrieved chunks for escalation language does not work either: at
-six chunks per query it fired on 42 of 113 answerable requirements, because a
-marker anywhere in the candidate set says nothing about the chunk that
-actually supports the answer.
+So escalation is checked in two places, and either one holds the answer:
 
-So the guardrail runs *after* the model commits to its evidence:
+- the passage containing the model's own quote, and
+- the passage, across all supplied evidence, that best matches the
+  requirement -- which depends on nothing the model chose.
 
-1. The model must name one source document and quote it verbatim.
-2. The quote is verified to actually appear in that document. A quote that
-   does not is fabricated evidence, and the verdict is discarded.
-3. Escalation markers are checked only in the *cited* chunk. If the evidence
-   the model chose to rely on says "route to Legal", the answer is an
-   escalation regardless of the verdict the model produced.
+Against the gold key this keeps every catch the whole-chunk rule made while
+cutting false holds from 6 to 1. Before either check runs, the model must name
+one supplied document and quote it verbatim, and a quote not found there
+discards the verdict.
 
-Only the degenerate case -- retrieval returned nothing at all -- is handled
-before the call, because there is nothing to send.
+What this cannot catch, stated plainly: a model that answers confidently and
+quotes a real but irrelevant sentence, where the evidence contains no
+escalation language at all. The public-role pricing questions are the example:
+no public document mentions pricing, so there is nothing lexical to trigger
+on. That case rests on the model's own judgment, which is what the live eval
+measures. `tests/test_pipeline.py` pins it as a known gap.
 """
 
 from __future__ import annotations
@@ -39,19 +44,21 @@ from dataclasses import dataclass, field
 from .knowledge import PUBLIC, Chunk
 from .llm import LLMClient, Usage
 from .models import Requirement
-from .retrieval import BM25Retriever
+from .retrieval import BM25Retriever, split_passages
 
 NEEDS_INPUT = "Needs Input"
 
-# Phrases a knowledge base uses to say "a human must handle this". Checked only
-# against the chunk the model cited.
+# Phrases a knowledge base uses to say "a person must handle this". Kept
+# directive: an earlier bare "route to" also matched "no direct public route to
+# the data tier" and held every network-security answer.
 ESCALATION_RE = re.compile(
     r"no approved company position"
     r"|not previously answered"
     r"|not recorded here"
     r"|do not answer from precedent"
     r"|do not draft a position"
-    r"|route (?:to|any|all)"
+    r"|do not quote"
+    r"|route\b[^.\n]{0,40}\bto legal"
     r"|before responding"
     r"|does not represent compliance",
     re.I,
@@ -106,6 +113,16 @@ class Classification:
 
 def _normalise(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip().lower()
+
+
+def _passage_containing(quote: str, text: str) -> str:
+    target = _normalise(quote)
+    for passage in split_passages(text):
+        if target in _normalise(passage):
+            return passage
+    # A quote spanning passage boundaries falls back to the whole chunk, which
+    # errs toward holding the answer rather than letting it through.
+    return text
 
 
 def build_user_prompt(requirement: Requirement, evidence: list[Chunk]) -> str:
@@ -191,10 +208,17 @@ def classify_requirement(
         )
         return result, response.usage
 
-    if ESCALATION_RE.search(cited.text):
+    if ESCALATION_RE.search(_passage_containing(quote, cited.text)):
         override(
             "cited evidence requires escalation",
-            "The supporting documentation states that this question must be routed to a human before answering.",
+            "The passage this answer relies on says the question must be routed to a person before answering.",
+        )
+        return result, response.usage
+
+    if ESCALATION_RE.search(retriever.best_passage(requirement.text, evidence)):
+        override(
+            "relevant evidence requires escalation",
+            "The documentation that addresses this requirement says it must be routed to a person before answering.",
         )
         return result, response.usage
 

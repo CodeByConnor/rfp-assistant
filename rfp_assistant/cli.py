@@ -206,8 +206,96 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--stub-verdict", default="Yes", help="verdict the offline stub returns")
     r.set_defaults(func=_cmd_respond)
 
+    s = sub.add_parser("serve", help="run the local review app")
+    s.add_argument("--host", default="127.0.0.1")
+    s.add_argument("--port", type=int, default=8765)
+    s.add_argument("--store", default=str(ROOT / "runs"), help="where review runs are kept")
+    s.add_argument("--kb", default=str(DEFAULT_KB))
+    s.add_argument("--gold", default=str(DEFAULT_GOLD))
+    s.add_argument("--role", choices=["public", "internal"], default="public")
+    s.add_argument(
+        "--offline",
+        choices=["replay", "stub"],
+        default="replay",
+        help="offline client: replay the hand-labelled key (demo), or placeholder verdicts",
+    )
+    s.add_argument(
+        "--live",
+        action="store_true",
+        help="uploads call the real API (costs money). Asks before starting.",
+    )
+    s.add_argument("--model", default=DEFAULT_MODEL, choices=sorted(PRICING))
+    s.add_argument("--limit", type=int, metavar="N", help="cap requirements per upload (live default: 25)")
+    s.add_argument("--yes", action="store_true", help="skip the live-server confirmation")
+    s.set_defaults(func=_cmd_serve)
+
     args = parser.parse_args(argv)
     return args.func(args)
+
+
+def _cmd_serve(args) -> int:
+    try:
+        import uvicorn
+
+        from .web.app import create_app
+    except ImportError:
+        print(
+            "error: the review app needs extra packages: "
+            "pip install fastapi uvicorn python-multipart",
+            file=sys.stderr,
+        )
+        return 2
+    from .llm import ReplayClient, estimate_run_cost
+
+    role = INTERNAL if args.role == "internal" else PUBLIC
+
+    if args.live:
+        limit = args.limit or 25
+        print("LIVE SERVER - every upload will call the Anthropic API and incur charges.")
+        print(f"  model                : {args.model}")
+        print(f"  cap per upload       : {limit} requirements")
+        print(f"  estimated per upload : up to ~${estimate_run_cost(limit, args.model):.2f}")
+        if not args.yes:
+            try:
+                reply = input("\nStart the live server? [y/N] ").strip().lower()
+            except EOFError:
+                reply = ""
+            if reply not in {"y", "yes"}:
+                print("aborted - server not started, nothing was charged.")
+                return 1
+        try:
+            AnthropicClient(model=args.model)
+        except RuntimeError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        model = args.model
+        factory = lambda: AnthropicClient(model=model)  # noqa: E731
+        mode = f"live:{model}"
+    else:
+        limit = args.limit
+        model = None
+        if args.offline == "replay":
+            gold = args.gold
+            factory = lambda: ReplayClient(gold)  # noqa: E731
+            mode = "replay"
+        else:
+            factory = StubClient
+            mode = "stub"
+
+    app = create_app(
+        store_dir=args.store,
+        kb_dir=args.kb,
+        client_factory=factory,
+        mode=mode,
+        model=model,
+        live=args.live,
+        limit=limit,
+        role=role,
+        sample_path=DEFAULT_RFP,
+    )
+    print(f"RFP Assistant review app: http://{args.host}:{args.port}  [{mode}]")
+    uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+    return 0
 
 
 if __name__ == "__main__":
