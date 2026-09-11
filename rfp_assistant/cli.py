@@ -23,7 +23,7 @@ from pathlib import Path
 from .classify import classify_all
 from .evaluate import evaluate_retrieval
 from .knowledge import INTERNAL, PUBLIC, load_knowledge_base
-from .llm import DEFAULT_MODEL, PRICING, AnthropicClient, StubClient, estimate_tokens
+from .llm import DEFAULT_MODEL, PRICING, AnthropicClient, StubClient
 from .parsers import UnsupportedFormat, parse, parse_pdf_detailed, requirement_tabs
 from .report import build_gaps, render_markdown, summarise
 
@@ -77,6 +77,90 @@ def _cmd_parse(args) -> int:
     return 0
 
 
+def _confirm_live(count: int, model: str, *, assume_yes: bool) -> bool:
+    """Show what a live run will cost, then require an explicit yes."""
+    from .llm import estimate_run_cost
+
+    print("LIVE RUN - this will call the Anthropic API and incur charges.")
+    print(f"  model            : {model}")
+    print(f"  requirements     : {count}")
+    print(f"  estimated cost   : ~${estimate_run_cost(count, model):.2f}")
+    print("  (estimate only; actual usage is reported when the run finishes)")
+    if assume_yes:
+        return True
+    try:
+        reply = input("\nProceed? [y/N] ").strip().lower()
+    except EOFError:
+        reply = ""
+    if reply in {"y", "yes"}:
+        return True
+    print("aborted - nothing was sent, nothing was charged.")
+    return False
+
+
+def _live_client(model: str):
+    try:
+        return AnthropicClient(model=model)
+    except RuntimeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return None
+
+
+def _cmd_eval_classify(args) -> int:
+    from .evaluate import evaluate_classification, load_gold
+    from .llm import ReplayClient
+
+    entries = load_gold(args.gold)
+    if args.limit:
+        entries = entries[: args.limit]
+
+    if args.live:
+        if not _confirm_live(len(entries), args.model, assume_yes=args.yes):
+            return 1
+        client = _live_client(args.model)
+        if client is None:
+            return 2
+        mode = f"live ({args.model})"
+    elif args.offline == "replay":
+        client = ReplayClient(args.gold)
+        mode = "offline replay"
+    else:
+        client = StubClient(verdict=args.stub_verdict)
+        mode = f"offline stub, verdict={args.stub_verdict}"
+
+    score = evaluate_classification(
+        args.rfp, args.kb, args.gold, client, top_k=args.top_k, limit=args.limit
+    )
+
+    print(f"classification eval over {score.total} labelled items  [{mode}]")
+    print(f"  accuracy                  : {score.accuracy:.1%}  ({score.correct}/{score.total})")
+    print(
+        f"  overstatements            : {len(score.overstatements)}"
+        f"  ({score.overstatement_rate:.1%}) - predicted more favourable than the label"
+    )
+    print(f"  unanswerable held         : {score.guardrail_correct}/{score.guardrail_total}")
+    print(f"  internal citations leaked : {len(score.leaks)}")
+    if not args.live and args.offline == "replay":
+        print()
+        print("  note: replay returns the labelled verdicts, so this measures what the")
+        print("        guardrail changes, not how well a model classifies. Use --live")
+        print("        for that.")
+
+    print("\n  expected     | predicted")
+    for expected in ["Yes", "Partial", "Roadmap", "No", "Needs Input"]:
+        row = score.confusion.get(expected)
+        if not row:
+            continue
+        cells = ", ".join(f"{k} {n}" for k, n in sorted(row.items(), key=lambda kv: -kv[1]))
+        print(f"  {expected:<12} | {cells}")
+
+    if score.wrong and args.show_wrong:
+        print(f"\n  mismatches ({len(score.wrong)}):")
+        for rid, role, expected, predicted in score.wrong[: args.show_wrong]:
+            print(f"    {rid:<8} [{role:<13}] expected {expected:<11} got {predicted}")
+    return 0
+
+
 def _cmd_eval_retrieval(args) -> int:
     score = evaluate_retrieval(args.rfp, args.kb, args.gold, top_k=args.top_k)
     print(f"retrieval eval over {score.total} labelled requirements (top_k={args.top_k})")
@@ -107,33 +191,10 @@ def _cmd_respond(args) -> int:
     role = INTERNAL if args.role == "internal" else PUBLIC
 
     if args.live:
-        estimated_in = sum(
-            estimate_tokens(r.text) + args.top_k * 220 + 260 for r in requirements
-        )
-        estimated_out = len(requirements) * 160
-        rate_in, rate_out = PRICING.get(args.model, PRICING[DEFAULT_MODEL])
-        estimate = (estimated_in / 1e6) * rate_in + (estimated_out / 1e6) * rate_out
-
-        print("LIVE RUN - this will call the Anthropic API and incur charges.")
-        print(f"  model            : {args.model}")
-        print(f"  requirements     : {len(requirements)}")
-        print(f"  estimated tokens : ~{estimated_in:,} in / ~{estimated_out:,} out")
-        print(f"  estimated cost   : ~${estimate:.2f}")
-        print("  (estimate only; actual usage is reported when the run finishes)")
-
-        if not args.yes:
-            try:
-                reply = input("\nProceed? [y/N] ").strip().lower()
-            except EOFError:
-                reply = ""
-            if reply not in {"y", "yes"}:
-                print("aborted - nothing was sent, nothing was charged.")
-                return 1
-
-        try:
-            client = AnthropicClient(model=args.model)
-        except RuntimeError as exc:
-            print(f"error: {exc}", file=sys.stderr)
+        if not _confirm_live(len(requirements), args.model, assume_yes=args.yes):
+            return 1
+        client = _live_client(args.model)
+        if client is None:
             return 2
     else:
         client = StubClient(verdict=args.stub_verdict)
@@ -188,6 +249,24 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("--top-k", type=int, default=6)
     e.add_argument("--show-misses", action="store_true")
     e.set_defaults(func=_cmd_eval_retrieval)
+
+    ec = sub.add_parser("eval-classify", help="score verdicts against the gold key")
+    ec.add_argument("--rfp", default=str(DEFAULT_RFP))
+    ec.add_argument("--kb", default=str(DEFAULT_KB))
+    ec.add_argument("--gold", default=str(DEFAULT_GOLD))
+    ec.add_argument("--top-k", type=int, default=6)
+    ec.add_argument("--offline", choices=["replay", "stub"], default="replay")
+    ec.add_argument("--stub-verdict", default="Yes")
+    ec.add_argument(
+        "--live",
+        action="store_true",
+        help="score a real model (costs money). Without this, runs offline for free.",
+    )
+    ec.add_argument("--model", default=DEFAULT_MODEL, choices=sorted(PRICING))
+    ec.add_argument("--limit", type=int, metavar="N")
+    ec.add_argument("--yes", action="store_true", help="skip the live-run confirmation")
+    ec.add_argument("--show-wrong", type=int, default=10, metavar="N")
+    ec.set_defaults(func=_cmd_eval_classify)
 
     r = sub.add_parser("respond", help="classify requirements and write a gap report")
     r.add_argument("path", nargs="?", default=str(DEFAULT_RFP))

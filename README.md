@@ -33,6 +33,41 @@ A full 248-requirement live run is roughly **$2.60 on Opus 5, $1.05 on Sonnet
 5, or $0.52 on Haiku 4.5** — measured from real token counts in an offline
 run, not guessed.
 
+## Scoring the answers
+
+```bash
+python -m rfp_assistant eval-classify                  # offline, free
+python -m rfp_assistant eval-classify --live --limit 30 --model claude-haiku-4-5
+```
+
+Accuracy is reported, but the headline number is **overstatements** —
+predictions more favourable than the label. The two error directions are not
+equally costly: a `Partial` where the truth is `Yes` costs a reviewer a
+correction, while a `Yes` where the truth is `No` puts a capability the product
+lacks into a document that becomes a contractual commitment.
+
+Offline the eval replays the labelled verdicts, so it measures what the
+*guardrail* changes rather than how well a model classifies:
+
+```
+accuracy                  : 96.2%  (125/130)
+overstatements            : 0
+unanswerable held         : 11/11
+internal citations leaked : 0
+```
+
+`--live` is what measures a model, and it is the only command in this project
+that has not been run yet.
+
+**One disagreement is worth keeping rather than fixing.** Four of the five
+offline mismatches are the pricing questions under the `internal` role, where
+the pricing document is visible. The pipeline holds them, because that document
+says *"Never disclose list tier pricing directly in a written RFP response"*.
+The key labels them answerable, meaning the figure is reachable; the guardrail
+is answering the better question — whether it may be written into a customer's
+document. So the labels are annotated, not changed. Editing labels to match
+behaviour is how an eval stops being evidence.
+
 ## The review app
 
 ```bash
@@ -79,7 +114,7 @@ posture is represented.
 python -m rfp_assistant parse fixtures/rfp-alderwood-retail.xlsx
 python -m rfp_assistant parse fixtures/rfp-alderwood-retail.pdf --show 5
 python -m rfp_assistant parse <file> --json > requirements.json
-pytest                      # 117 tests, all offline (1 known-gap xfail)
+pytest                      # 127 tests, all offline (1 known-gap xfail)
 ```
 
 ## Layout
@@ -99,7 +134,7 @@ rfp_assistant/
   export.py              Write approved answers into the buyer's workbook.
   workbook.py            Vendor-column discovery shared by review and export.
   web/                   FastAPI app + a single-page review UI, no build step.
-tests/                   117 tests, all offline.
+tests/                   127 tests, all offline.
 docs/knowledge-base/     11 Meridian documents: product, architecture,
                          security, privacy, integrations, SLA/support,
                          implementation, company profile, roadmap, past
@@ -386,7 +421,8 @@ rather than a preference.
       gap report
 - [x] **M4** — Review app: upload, approve/edit, export into the buyer's
       own workbook
-- [ ] **M5** — Live classification eval against the gold key, deploy
+- [x] **M5a** — Classification eval harness (offline; `--live` ready)
+- [ ] **M5b** — One live run against a real model, then deploy
 
 ## Testing
 

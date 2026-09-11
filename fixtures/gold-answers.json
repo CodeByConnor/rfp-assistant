@@ -2,6 +2,7 @@
   "_comment": "Hand-labeled answer key for the Alderwood RFP fixture. Requirement ids match fixtures/requirements_data.py and therefore all three fixture formats. 'role' controls which knowledge chunks retrieval may see, for the RBAC cases.",
   "_strategy": "Stratified subset, not exhaustive. 248 requirements are labeled here only where the label is defensible from the knowledge base and where the case teaches the pipeline something: every verdict class, every deliberate gap, both RBAC roles, and each near-duplicate cluster. Labeling all 248 would mean generating labels mechanically, which is worse than labeling fewer honestly. Expand this set as the pipeline gets more capable.",
   "_verdicts": ["Yes", "Partial", "No", "Roadmap", "Needs Input"],
+  "_known_disagreement": "The four internal-role pricing entries (6.2.2, 8.1.1, 8.1.2, 8.1.4) are labelled answerable because the pricing document is reachable under that role. The pipeline holds them as Needs Input instead, because that document says never to disclose list pricing in a written RFP response. The guardrail is answering the better question - not whether the figure can be found, but whether it may be written into a customer's document - so these labels are annotated rather than changed. Editing labels to match behaviour is how an eval stops being evidence.",
 
   "requirements": [
     { "id": "1.1.1", "role": "public", "verdict": "Yes", "citations": ["company-profile.md"] },
