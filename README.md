@@ -100,6 +100,47 @@ the demo shows real holds. `serve --live` switches to the real model after a
 terminal confirmation with a per-upload cost estimate and cap; nothing in the
 browser can switch modes.
 
+## Deploying the public demo
+
+```bash
+python -m rfp_assistant serve --demo   # preview exactly what the deployment serves
+```
+
+The deployed demo is deliberately a different app from the local tool:
+
+| | local (`serve`) | demo (`serve --demo`, Vercel) |
+|---|---|---|
+| state | runs kept on disk | none — the browser holds the review |
+| verdicts | replay, stub, or a live model | precomputed, committed as `fixtures/demo-run.json` |
+| upload | parsed **and** classified | parsed only |
+| can reach a model | yes, via `--live` | never |
+
+Three reasons for the split. A serverless host has an ephemeral filesystem, so
+a run written by one request may not exist for the next. A public URL must
+never be able to spend the owner's API budget, so demo mode builds no model
+client at all — `create_app(demo=True)` does not accept one, and a test asserts
+local mode refuses to start without one while demo mode requires none. And
+replayed verdicts only mean anything for the bundled RFP: a stranger's RFP has
+no labels, so uploads run the *parser* on their real file and report what was
+extracted, which needs no model and costs nothing.
+
+The approval rules are not reimplemented in JavaScript for demo mode. The
+browser posts the row and the edit to a stateless endpoint that calls the same
+`review.update_row` the local app uses, because two copies of a rule become two
+different rules.
+
+**Deploying:** import the repo at vercel.com/new and accept the defaults.
+`vercel.json` routes every path to `api/index.py`, which hardcodes `demo=True`.
+There are no environment variables to set — the demo has no secrets because it
+has no model.
+
+Regenerate the committed run after changing the fixtures, the knowledge base,
+or the guardrail. A test fails if it goes stale:
+
+```bash
+.venv/bin/python fixtures/build_demo_run.py
+```
+
 ## Demo data is fictional
 
 This isn't built against a real company's documentation. Everything targets a
@@ -122,7 +163,7 @@ pip install -r requirements-dev.txt    # to run the tests as well
 python -m rfp_assistant parse fixtures/rfp-alderwood-retail.xlsx
 python -m rfp_assistant parse fixtures/rfp-alderwood-retail.pdf --show 5
 python -m rfp_assistant parse <file> --json > requirements.json
-pytest                      # 127 tests, all offline (1 known-gap xfail)
+pytest                      # 142 tests, all offline (1 known-gap xfail)
 ```
 
 ## Layout
@@ -142,7 +183,7 @@ rfp_assistant/
   export.py              Write approved answers into the buyer's workbook.
   workbook.py            Vendor-column discovery shared by review and export.
   web/                   FastAPI app + a single-page review UI, no build step.
-tests/                   127 tests, all offline.
+tests/                   142 tests, all offline.
 docs/knowledge-base/     11 Meridian documents: product, architecture,
                          security, privacy, integrations, SLA/support,
                          implementation, company profile, roadmap, past
@@ -430,7 +471,8 @@ rather than a preference.
 - [x] **M4** — Review app: upload, approve/edit, export into the buyer's
       own workbook
 - [x] **M5a** — Classification eval harness (offline; `--live` ready)
-- [ ] **M5b** — One live run against a real model, then deploy
+- [x] **M5b** — Stateless demo mode, precomputed run, Vercel entrypoint
+- [ ] **M5c** — Deploy, then one live run against a real model
 
 ## Testing
 

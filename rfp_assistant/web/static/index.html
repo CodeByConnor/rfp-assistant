@@ -94,6 +94,8 @@ main { max-width: 1280px; margin: 0 auto; padding: 22px 24px 64px; }
 .filter[aria-selected=true] { background: var(--panel); border-color: var(--line); color: var(--ink); font-weight: 550; }
 .filter .c { font-variant-numeric: tabular-nums; margin-left: 4px; opacity: .75; }
 #search { width: 260px; max-width: 100%; }
+#parsed h2 { margin: 0 0 6px; font-size: 19px; letter-spacing: -0.01em; }
+#parsed p { margin: 0 0 16px; max-width: 70ch; }
 
 .table-wrap { overflow-x: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
 table { width: 100%; border-collapse: collapse; min-width: 760px; table-layout: fixed; }
@@ -181,13 +183,15 @@ blockquote {
 <main>
   <section id="empty" class="empty" hidden>
     <h2>Review an RFP response</h2>
-    <p>Upload an RFP as .xlsx, .pdf, or .md. Every requirement is extracted, matched against the product documentation, and given a draft answer for you to review.</p>
+    <p id="emptyLead">Upload an RFP as .xlsx, .pdf, or .md. Every requirement is extracted, matched against the product documentation, and given a draft answer for you to review.</p>
     <div class="steps">
       <div class="step"><b>1</b><span>Requirements the documentation can't settle are held as <em>Needs Input</em> rather than guessed at.</span></div>
       <div class="step"><b>2</b><span>You approve each answer. Uncertain rows need a compliance level from you before they can be approved.</span></div>
-      <div class="step"><b>3</b><span>Download the buyer's own workbook with approved answers filled in. Unapproved rows stay blank.</span></div>
+      <div class="step"><b>3</b><span id="step3">Download the buyer's own workbook with approved answers filled in. Unapproved rows stay blank.</span></div>
     </div>
   </section>
+
+  <section id="parsed" hidden></section>
 
   <section id="workspace" hidden>
     <div class="runhead">
@@ -247,7 +251,8 @@ const REASONS = {
   "no evidence retrieved": "no documentation relevant to this requirement was found",
 };
 
-const state = { config: null, run: null, filter: "attention", query: "", open: null };
+const state = { config: null, run: null, parsed: null, filter: "attention", query: "", open: null };
+const DEMO_KEY = "rfp-assistant-demo-run";
 const $ = id => document.getElementById(id);
 
 function el(tag, props = {}, ...children) {
@@ -272,6 +277,32 @@ async function api(path, options = {}) {
   const body = type.includes("application/json") ? await res.json() : await res.text();
   if (!res.ok) throw new Error((body && body.detail) || res.statusText || "request failed");
   return body;
+}
+
+function computeCounts(rows) {
+  const verdicts = {};
+  let approved = 0, pending = 0, blocking = 0, escalated = 0;
+  for (const r of rows) {
+    verdicts[r.verdict] = (verdicts[r.verdict] || 0) + 1;
+    if (r.status === "approved") approved++; else pending++;
+    if (r.is_blocking) blocking++;
+    if (r.overridden_from) escalated++;
+  }
+  return { total: rows.length, verdicts, approved, pending, blocking, escalated };
+}
+
+// Demo mode keeps the review in the browser, because the deployment keeps no
+// state of its own. Storage can be unavailable or full, and losing a draft is
+// not worth breaking the page over.
+function demoSave() {
+  if (!state.config.demo || !state.run) return;
+  try { localStorage.setItem(DEMO_KEY, JSON.stringify(state.run)); } catch (_) {}
+}
+function demoRestore() {
+  try {
+    const raw = localStorage.getItem(DEMO_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (_) { return null; }
 }
 
 function toast(message, kind = "") {
@@ -300,6 +331,13 @@ function renderBanner() {
     b.className = "banner stub";
     b.textContent = "Offline stub — every verdict is a placeholder so the workflow can be exercised. No model is called and nothing is billed.";
   }
+  if (c.demo) {
+    $("runSelect").hidden = true;
+    $("emptyLead").textContent =
+      "Start with the sample RFP: 248 requirements, each classified against the product documentation with a cited answer. You can also upload your own .xlsx, .pdf, or .md — this demo will extract the requirements from it, but classifying them needs a model and an API key, so clone the repo to do that locally.";
+    $("step3").textContent =
+      "Download the buyer's own workbook with approved answers filled in. Nothing is stored on the server; your review lives in this browser.";
+  }
   if (c.role !== "public") {
     b.textContent += "  Internal documents are visible to this server; its runs cannot be exported to a customer.";
   }
@@ -308,6 +346,7 @@ function renderBanner() {
 // ---------------------------------------------------------------- runs
 
 async function loadRuns(selectId) {
+  if (state.config.demo) { $("runSelect").hidden = true; return []; }
   const runs = await api("/api/runs");
   const select = $("runSelect");
   select.replaceChildren(el("option", { value: "", text: runs.length ? "Previous runs…" : "No previous runs" }));
@@ -346,12 +385,17 @@ async function upload(file) {
   if (!file) return;
   const form = new FormData();
   form.append("file", file);
-  busy(`Reading ${file.name} and drafting answers…`);
+  busy(state.config.demo ? `Parsing ${file.name}…` : `Reading ${file.name} and drafting answers…`);
   try {
-    const run = await api("/api/runs", { method: "POST", body: form });
-    await loadRuns(run.id);
-    showRun(run);
-    toast(`${run.counts.total} requirements extracted`);
+    const result = await api("/api/runs", { method: "POST", body: form });
+    if (result.parse_only) {
+      showParsed(result);
+      toast(`${result.total} requirements extracted`);
+    } else {
+      await loadRuns(result.id);
+      showRun(result);
+      toast(`${result.counts.total} requirements extracted`);
+    }
   } catch (err) {
     toast(err.message, "error");
   } finally {
@@ -364,8 +408,9 @@ async function loadSample() {
   busy("Drafting answers for the sample RFP…");
   try {
     const run = await api("/api/sample", { method: "POST" });
-    await loadRuns(run.id);
+    if (!state.config.demo) await loadRuns(run.id);
     showRun(run);
+    demoSave();
     toast(`${run.counts.total} requirements extracted`);
   } catch (err) {
     toast(err.message, "error");
@@ -376,9 +421,16 @@ async function loadSample() {
 
 async function download(kind) {
   const run = state.run;
-  const path = kind === "xlsx" ? `/api/runs/${run.id}/export.xlsx` : `/api/runs/${run.id}/report.md`;
+  const demo = state.config.demo;
+  const path = demo
+    ? (kind === "xlsx" ? "/api/export/workbook" : "/api/export/report")
+    : (kind === "xlsx" ? `/api/runs/${run.id}/export.xlsx` : `/api/runs/${run.id}/report.md`);
+  const options = demo
+    ? { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rows: run.rows, source_name: run.source_name }) }
+    : {};
   try {
-    const res = await fetch(path);
+    const res = await fetch(path, options);
     if (!res.ok) {
       let message = res.statusText;
       try { message = (await res.json()).detail || message; } catch (_) {}
@@ -414,9 +466,12 @@ function render() {
   if (!run) return;
 
   $("runTitle").textContent = run.source_name;
-  const when = new Date(run.created_at).toLocaleString();
   const mode = run.mode === "replay" ? "demo replay" : run.mode;
-  $("runMeta").textContent = `${run.counts.total} requirements · ${run.source_format.toUpperCase()} · ${mode} · ${when}`;
+  // The precomputed demo run carries no timestamp, so only show one when it parses.
+  const when = run.created_at ? new Date(run.created_at) : null;
+  const meta = [`${run.counts.total} requirements`, run.source_format.toUpperCase(), mode];
+  if (when && !Number.isNaN(when.valueOf())) meta.push(when.toLocaleString());
+  $("runMeta").textContent = meta.join(" · ");
   $("exportXlsx").disabled = run.role !== "public";
   $("exportXlsx").title = run.role !== "public" ? "Runs made with internal documents visible cannot be exported" : "";
 
@@ -554,14 +609,21 @@ function detail(row) {
 async function submit(row, patch, advance) {
   if (!Object.keys(patch).length) { toast("No changes to save"); return; }
   try {
-    const res = await api(`/api/runs/${state.run.id}/rows/${encodeURIComponent(row.rid)}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(patch),
-    });
+    const res = state.config.demo
+      ? await api("/api/rows/apply", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ row, patch }),
+        })
+      : await api(`/api/runs/${state.run.id}/rows/${encodeURIComponent(row.rid)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(patch),
+        });
     const i = state.run.rows.findIndex(r => r.rid === row.rid);
     state.run.rows[i] = res.row;
-    state.run.counts = res.counts;
+    state.run.counts = computeCounts(state.run.rows);
+    demoSave();
     if (advance) {
       const next = visibleRows().find(r => r.status === "pending" && r.rid !== row.rid);
       state.open = next ? next.rid : null;
@@ -569,7 +631,7 @@ async function submit(row, patch, advance) {
     renderStats();
     renderFilters();
     renderRows();
-    loadRuns(state.run.id);
+    if (!state.config.demo) loadRuns(state.run.id);
   } catch (err) {
     toast(err.message, "error");
   }
@@ -593,6 +655,15 @@ async function init() {
   }
   renderBanner();
   $("sampleBtn").hidden = !state.config.sample;
+
+  if (state.config.demo) {
+    // The demo server keeps nothing, so a reload restores the review from this
+    // browser. A server restart loses none of it.
+    const saved = demoRestore();
+    if (saved && Array.isArray(saved.rows) && saved.rows.length) showRun(saved);
+    else render();
+    return;
+  }
 
   const runs = await loadRuns();
   if (runs.length) await openRun(runs[0].id);

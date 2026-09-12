@@ -306,6 +306,11 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--model", default=DEFAULT_MODEL, choices=sorted(PRICING))
     s.add_argument("--limit", type=int, metavar="N", help="cap requirements per upload (live default: 25)")
     s.add_argument("--yes", action="store_true", help="skip the live-server confirmation")
+    s.add_argument(
+        "--demo",
+        action="store_true",
+        help="preview the public demo: stateless, parse-only uploads, no model",
+    )
     s.set_defaults(func=_cmd_serve)
 
     args = parser.parse_args(argv)
@@ -325,6 +330,27 @@ def _cmd_serve(args) -> int:
         )
         return 2
     from .llm import ReplayClient, estimate_run_cost
+
+    if args.demo:
+        if args.live:
+            print(
+                "error: --demo cannot be combined with --live. The demo is what a "
+                "public URL serves, and it must not be able to reach a model.",
+                file=sys.stderr,
+            )
+            return 2
+        app = create_app(
+            demo=True,
+            mode="replay",
+            sample_path=DEFAULT_RFP,
+            demo_run_path=ROOT / "fixtures" / "demo-run.json",
+        )
+        print(
+            f"RFP Assistant demo (stateless, no model, parse-only uploads): "
+            f"http://{args.host}:{args.port}"
+        )
+        uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+        return 0
 
     role = INTERNAL if args.role == "internal" else PUBLIC
 
