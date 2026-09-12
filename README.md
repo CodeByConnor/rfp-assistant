@@ -108,6 +108,14 @@ retailer, **Alderwood Retail Group**. All content in `docs/` and `fixtures/`
 is invented for this project — no real vendor, buyer, pricing, or security
 posture is represented.
 
+## Install
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt        # to run it
+pip install -r requirements-dev.txt    # to run the tests as well
+```
+
 ## Usage
 
 ```bash
