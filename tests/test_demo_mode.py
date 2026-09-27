@@ -180,3 +180,35 @@ def test_export_refuses_an_oversized_payload(client, run):
 
 def test_export_refuses_an_empty_payload(client):
     assert client.post("/api/export/workbook", json={"rows": []}).status_code == 422
+
+
+# ------------------------------------------------------------------ deployment
+
+def test_deployment_entrypoint_loads_and_serves():
+    """main.py is what the host imports. A mistake here fails at deploy time
+    rather than in the test suite, so it is worth asserting: the module loads,
+    exposes a top-level `app`, serves the page, and returns the precomputed run.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("deploy_entry", ROOT / "main.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    assert hasattr(module, "app"), "the host loads a top-level 'app'"
+    deployed = TestClient(module.app)
+    assert deployed.get("/").status_code == 200
+    assert deployed.post("/api/sample").json()["counts"]["total"] == 248
+
+
+def test_deployment_entrypoint_is_demo_only():
+    """The public entrypoint must never be able to reach a model."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("deploy_entry2", ROOT / "main.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    config = TestClient(module.app).get("/api/config").json()
+    assert config["demo"] is True
+    assert config["live"] is False

@@ -130,7 +130,8 @@ browser posts the row and the edit to a stateless endpoint that calls the same
 different rules.
 
 **Deploying:** import the repo at vercel.com/new and accept the defaults.
-`vercel.json` routes every path to `api/index.py`, which hardcodes `demo=True`.
+Vercel detects FastAPI from `requirements.txt` and loads the top-level `app`
+from `main.py`, which hardcodes `demo=True`; every request is routed to it.
 There are no environment variables to set — the demo has no secrets because it
 has no model.
 
