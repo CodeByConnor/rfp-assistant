@@ -10,7 +10,7 @@
     "api/index.py": {
       "memory": 1024,
       "maxDuration": 60,
-      "includeFiles": "**"
+      "includeFiles": "{fixtures,rfp_assistant}/**"
     }
   }
 }

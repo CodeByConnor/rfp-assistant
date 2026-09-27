@@ -1,0 +1,7 @@
+# Everything needed to run the tool locally.
+#   pip install -r requirements-local.txt
+
+-r requirements.txt
+
+uvicorn==0.52.4      # serves the review app
+anthropic==1.5.0     # only imported on the --live path

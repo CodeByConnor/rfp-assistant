@@ -1,12 +1,13 @@
-# Runtime dependencies.
-#   pip install -r requirements.txt
+# Deployment dependencies for the public demo.
 #
-# anthropic is only imported on the --live path; everything else in this
-# project runs offline without it.
+# Vercel installs THIS file automatically and the function has a hard size
+# ceiling, so it is deliberately the smallest set that serves the demo:
+#   - no uvicorn: the platform supplies the server, we only export the ASGI app
+#   - no anthropic: demo mode cannot reach a model, by construction
+#
+# To run the tool locally, install requirements-local.txt instead.
 
 fastapi==0.141.1
-uvicorn==0.52.4
 python-multipart==0.0.32
 openpyxl==3.1.5
 pdfplumber==0.11.10
-anthropic==1.5.0

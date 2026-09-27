@@ -153,9 +153,14 @@ posture is represented.
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt        # to run it
-pip install -r requirements-dev.txt    # to run the tests as well
+pip install -r requirements-local.txt   # run the tool
+pip install -r requirements-dev.txt     # run the tests as well
 ```
+
+`requirements.txt` is deliberately smaller than `requirements-local.txt`: it is
+the set the deployed demo needs. Vercel installs that file automatically and
+the function has a hard size ceiling, so it omits `uvicorn` (the platform
+supplies the server) and `anthropic` (demo mode cannot reach a model).
 
 ## Usage
 

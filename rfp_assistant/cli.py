@@ -324,8 +324,8 @@ def _cmd_serve(args) -> int:
         from .web.app import create_app
     except ImportError:
         print(
-            "error: the review app needs extra packages: "
-            "pip install fastapi uvicorn python-multipart",
+            "error: the review app needs the local dependency set: "
+            "pip install -r requirements-local.txt",
             file=sys.stderr,
         )
         return 2
