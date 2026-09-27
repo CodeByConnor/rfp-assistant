@@ -125,11 +125,13 @@ def create_app(
     limit: int | None = None,
     role: str = PUBLIC,
     sample_path: str | Path | None = None,
+    sample_document_path: str | Path | None = None,
     demo: bool = False,
     demo_run_path: str | Path = DEMO_RUN,
 ) -> FastAPI:
     index_html = (Path(__file__).parent / "static" / "index.html").read_text()
     sample = Path(sample_path) if sample_path else None
+    sample_document = Path(sample_document_path) if sample_document_path else None
     demo_run_path = Path(demo_run_path)
 
     app = FastAPI(title="RFP Assistant", docs_url=None, redoc_url=None, openapi_url=None)
@@ -148,6 +150,7 @@ def create_app(
             "role": role if not demo else PUBLIC,
             "demo": demo,
             "sample": demo or sample is not None,
+            "sample_document": sample_document is not None and sample_document.exists(),
             "compliance_levels": COMPLIANCE_LEVELS,
         }
 
@@ -167,6 +170,18 @@ def create_app(
             data = json.loads(demo_run_path.read_text())
             rows = [ReviewRow(**row) for row in data.pop("rows")]
             return Run(**data, rows=rows).to_dict()
+
+        @app.get("/api/sample/document")
+        def demo_sample_document() -> FileResponse:
+            """Serve the RFP itself, so a visitor can read the document the
+            answers are responding to rather than trusting a row count."""
+            if sample_document is None or not sample_document.exists():
+                raise HTTPException(404, "no source document is available")
+            return FileResponse(
+                sample_document,
+                media_type="application/pdf",
+                headers={"Content-Disposition": 'inline; filename="alderwood-rfp.pdf"'},
+            )
 
         @app.post("/api/runs", status_code=201)
         async def demo_upload(file: UploadFile = File(...)) -> dict:

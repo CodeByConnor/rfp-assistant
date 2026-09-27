@@ -27,5 +27,6 @@ app = create_app(
     demo=True,
     mode="replay",
     sample_path=ROOT / "fixtures" / "rfp-alderwood-retail.xlsx",
+    sample_document_path=ROOT / "fixtures" / "rfp-alderwood-retail.pdf",
     demo_run_path=ROOT / "fixtures" / "demo-run.json",
 )

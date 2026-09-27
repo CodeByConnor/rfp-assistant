@@ -75,7 +75,20 @@ main { max-width: 1280px; margin: 0 auto; padding: 22px 24px 64px; }
 .exports { display: flex; gap: 8px; }
 
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 10px; margin-bottom: 12px; }
-.stat { background: var(--panel); border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; }
+.stat {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px;
+  font: inherit; color: inherit; text-align: left; width: 100%; cursor: pointer;
+}
+.stat:hover:not(:disabled) { border-color: var(--accent); }
+.stat.active { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.stat:disabled { cursor: default; opacity: .5; }
+.scenario {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 9px;
+  padding: 12px 14px; margin-bottom: 14px; display: flex; gap: 16px;
+  align-items: center; justify-content: space-between; flex-wrap: wrap;
+}
+.scenario p { margin: 0; max-width: 78ch; font-size: 13px; }
+.scenario a { white-space: nowrap; text-decoration: none; }
 .stat .n { font-size: 21px; font-weight: 650; font-variant-numeric: tabular-nums; }
 .stat .l { font-size: 12px; color: var(--muted); }
 .stat.alert .n { color: var(--no); }
@@ -205,6 +218,8 @@ blockquote {
       </div>
     </div>
 
+    <div id="scenario" class="scenario" hidden></div>
+
     <div id="stats" class="stats"></div>
     <div class="progress-wrap">
       <div class="progress"><div id="progressBar"></div></div>
@@ -250,6 +265,17 @@ const REASONS = {
   "relevant evidence requires escalation": "the documentation that addresses this requirement says a person must answer it",
   "no evidence retrieved": "no documentation relevant to this requirement was found",
 };
+
+const STAT_CARDS = [
+  ["Requirements", c => c.total, "all"],
+  ["Yes", c => c.verdicts["Yes"] || 0, "verdict:Yes"],
+  ["Partial", c => c.verdicts["Partial"] || 0, "verdict:Partial"],
+  ["Roadmap", c => c.verdicts["Roadmap"] || 0, "verdict:Roadmap"],
+  ["No", c => c.verdicts["No"] || 0, "verdict:No"],
+  ["Needs Input", c => c.verdicts["Needs Input"] || 0, "verdict:Needs Input"],
+  ["Blocking", c => c.blocking, "blocking", true],
+  ["Held by guardrail", c => c.escalated, "escalated"],
+];
 
 const state = { config: null, run: null, parsed: null, filter: "attention", query: "", open: null };
 const DEMO_KEY = "rfp-assistant-demo-run";
@@ -475,22 +501,42 @@ function render() {
   $("exportXlsx").disabled = run.role !== "public";
   $("exportXlsx").title = run.role !== "public" ? "Runs made with internal documents visible cannot be exported" : "";
 
+  renderScenario();
   renderStats();
   renderFilters();
   renderRows();
 }
 
+function renderScenario() {
+  const box = $("scenario");
+  if (!state.config.demo || !state.run) { box.hidden = true; return; }
+  box.hidden = false;
+  box.replaceChildren(
+    el("p", {},
+      el("strong", { text: "What you are looking at. " }),
+      "Alderwood Retail Group, a 118-store grocery chain, issued this RFP for a customer data platform: 248 numbered requirements across security, privacy, integrations and commercial terms. You are answering it as Meridian, a fictional vendor. Every draft below was written from Meridian's own documentation, and each one names the document and sentence it came from."),
+    state.config.sample_document
+      ? el("a", { class: "btn ghost", href: "/api/sample/document", target: "_blank",
+                  rel: "noopener", text: "Read the RFP \u2197" })
+      : null,
+  );
+}
+
 function renderStats() {
   const c = state.run.counts;
-  const cards = [
-    ["Requirements", c.total],
-    ...VERDICTS.map(v => [v, c.verdicts[v] || 0]),
-    ["Blocking", c.blocking, c.blocking > 0],
-    ["Held by guardrail", c.escalated],
-  ];
-  $("stats").replaceChildren(...cards.map(([label, n, alert]) =>
-    el("div", { class: `stat${alert ? " alert" : ""}` }, el("div", { class: "n", text: n }), el("div", { class: "l", text: label }))
-  ));
+  $("stats").replaceChildren(...STAT_CARDS.map(([label, count, key, alert]) => {
+    const n = count(c);
+    const active = state.filter === key;
+    const card = el("button", {
+      type: "button",
+      class: `stat${alert && n ? " alert" : ""}${active ? " active" : ""}`,
+      "aria-pressed": String(active),
+      title: n ? `Show ${label.toLowerCase()}` : `No requirements in ${label.toLowerCase()}`,
+      onclick: () => setFilter(key),
+    }, el("div", { class: "n", text: n }), el("div", { class: "l", text: label }));
+    if (!n && key !== "all") card.disabled = true;
+    return card;
+  }));
   const pct = c.total ? Math.round((c.approved / c.total) * 100) : 0;
   $("progressBar").style.width = `${pct}%`;
   $("progressText").textContent = `${c.approved} of ${c.total} approved`;
@@ -498,16 +544,41 @@ function renderStats() {
 
 function renderFilters() {
   const rows = state.run.rows;
-  $("filters").replaceChildren(...FILTERS.map(([key, label, test]) =>
+  const pills = FILTERS.map(([key, label, test]) =>
     el("button", {
       class: "filter", role: "tab", "aria-selected": String(state.filter === key),
-      onclick: () => { state.filter = key; state.open = null; renderFilters(); renderRows(); },
+      onclick: () => setFilter(key),
     }, label, el("span", { class: "c", text: rows.filter(test).length }))
-  ));
+  );
+  if (state.filter.startsWith("verdict:")) {
+    pills.push(el("button", {
+      class: "filter", role: "tab", "aria-selected": "true", title: "Clear this filter",
+      onclick: () => setFilter("all"),
+    }, `${state.filter.slice(8)} \u2715`,
+       el("span", { class: "c", text: rows.filter(filterFn(state.filter)).length })));
+  }
+  $("filters").replaceChildren(...pills);
+}
+
+function filterFn(key) {
+  if (key.startsWith("verdict:")) {
+    const verdict = key.slice(8);
+    return r => r.verdict === verdict;
+  }
+  const found = FILTERS.find(f => f[0] === key);
+  return found ? found[2] : () => true;
+}
+
+function setFilter(key) {
+  state.filter = key;
+  state.open = null;
+  renderStats();
+  renderFilters();
+  renderRows();
 }
 
 function visibleRows() {
-  const test = FILTERS.find(f => f[0] === state.filter)[2];
+  const test = filterFn(state.filter);
   const q = state.query.trim().toLowerCase();
   return state.run.rows.filter(r => test(r) && (!q || r.rid.includes(q) || r.text.toLowerCase().includes(q)));
 }

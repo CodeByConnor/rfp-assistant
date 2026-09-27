@@ -343,6 +343,7 @@ def _cmd_serve(args) -> int:
             demo=True,
             mode="replay",
             sample_path=DEFAULT_RFP,
+            sample_document_path=ROOT / "fixtures" / "rfp-alderwood-retail.pdf",
             demo_run_path=ROOT / "fixtures" / "demo-run.json",
         )
         print(

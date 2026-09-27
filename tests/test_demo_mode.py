@@ -26,7 +26,8 @@ DEMO_RUN = ROOT / "fixtures" / "demo-run.json"
 @pytest.fixture(scope="module")
 def client():
     app = web.create_app(
-        demo=True, mode="replay", sample_path=XLSX, demo_run_path=DEMO_RUN
+        demo=True, mode="replay", sample_path=XLSX, demo_run_path=DEMO_RUN,
+        sample_document_path=ROOT / "fixtures" / "rfp-alderwood-retail.pdf",
     )
     return TestClient(app)
 
@@ -100,6 +101,23 @@ def test_upload_parses_but_does_not_classify(client, source):
     assert result["total"] == 248
     assert "verdict" not in json.dumps(result["requirements"][:3])
     assert sum(s["count"] for s in result["sections"]) == 248
+
+
+def test_the_source_rfp_is_readable(client):
+    """A visitor needs to see the document being answered, not just a row
+    count, or the 248 numbers mean nothing."""
+    res = client.get("/api/sample/document")
+    assert res.status_code == 200
+    assert res.headers["content-type"] == "application/pdf"
+    assert res.content[:4] == b"%PDF"
+    assert client.get("/api/config").json()["sample_document"] is True
+
+
+def test_source_document_is_absent_when_not_configured(tmp_path):
+    app = web.create_app(demo=True, sample_path=XLSX, demo_run_path=DEMO_RUN)
+    c = TestClient(app)
+    assert c.get("/api/config").json()["sample_document"] is False
+    assert c.get("/api/sample/document").status_code == 404
 
 
 def test_bad_upload_is_still_rejected(client):
