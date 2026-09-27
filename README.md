@@ -15,6 +15,21 @@ materially worse outcome than an honest "we need to check this."
 > report, and the review app all work and are tested end to end offline. No
 > live model run has been made yet. See [Milestones](#milestones).
 
+## Live demo
+
+**[rfp-assistant-codebyconnors-projects.vercel.app](https://rfp-assistant-codebyconnors-projects.vercel.app)**
+
+The sample RFP, fully clickable: 248 requirements, the rows the guardrail
+refused to answer and why, and the filled-in workbook export. You can upload
+your own .xlsx, .pdf, or .md too — the parser runs on your real file and
+reports what it extracted.
+
+Two things the deployment deliberately does not do. Verdicts there are replayed
+from the hand-labelled answer key rather than produced by a model, and the page
+says so in a banner. And uploads are parsed but never classified, because a
+public URL must not be able to spend an API budget. Clone the repo to run the
+full pipeline against a real model.
+
 ## Running it costs nothing by default
 
 `respond` uses an offline stub client unless you pass `--live`, so the whole
